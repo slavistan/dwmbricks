@@ -7,11 +7,11 @@
 /* Bricks declaration */
 static const Brick bricks[] = {
   /* Command        , Update Interval , Update Signal , Name */
+  {"status ding"    , 0               , 4             , "test"}  ,
   {"status keymap"  , 0               , 1             , "xkb"}   ,
   {"status power"   , 60              , 2             , "power"} ,
-  {"status systime" , 1               , 3             , "time"}  ,
-  {"status ding"    , 0               , 4             , "test"}  ,
+  {"status systime" , 60              , 3             , "time"}  ,
 };
 
-/* Delimiter between bricks */
-static char *delim = "|";
+/* Delimiter between bricks. */
+static char delim[] = " | "; // TIL `char *arr != char arr[]'

@@ -14,6 +14,7 @@
 #include <X11/Xlib.h>
 
 #define NUMELEM(X) (sizeof(X) / sizeof (X[0]))
+#define BETWEEN(X, A, B)        ((A) <= (X) && (X) <= (B))
 
 typedef struct {
   char* command;
@@ -42,6 +43,8 @@ static char cmdoutbuf[NUMELEM(bricks)][OUTBUFSIZE + 1] = {0};
 static char statusbuf[NUMELEM(bricks) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0};
 /* Dispatcher function */
 static void (*writestatus) () = setroot;
+/* Number of utf8-chars in delim (not counting '\0') */
+static int numcdelim;
 
 void
 die(const char *fmt, ...) {
@@ -56,6 +59,58 @@ die(const char *fmt, ...) {
     fputc('\n', stderr);
   }
   exit(1);
+}
+
+#define UTF_SIZ     4
+#define UTF_INVALID 0xFFFD
+
+static const unsigned char utfbyte[UTF_SIZ + 1] = {0x80,    0, 0xC0, 0xE0, 0xF0};
+static const unsigned char utfmask[UTF_SIZ + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
+static const long utfmin[UTF_SIZ + 1] = {       0,    0,  0x80,  0x800,  0x10000};
+static const long utfmax[UTF_SIZ + 1] = {0x10FFFF, 0x7F, 0x7FF, 0xFFFF, 0x10FFFF};
+
+static long
+utf8decodebyte(const char c, size_t *i)
+{
+	for (*i = 0; *i < (UTF_SIZ + 1); ++(*i))
+		if (((unsigned char)c & utfmask[*i]) == utfbyte[*i])
+			return (unsigned char)c & ~utfmask[*i];
+	return 0;
+}
+
+static size_t
+utf8validate(long *u, size_t i)
+{
+	if (!BETWEEN(*u, utfmin[i], utfmax[i]) || BETWEEN(*u, 0xD800, 0xDFFF))
+		*u = UTF_INVALID;
+	for (i = 1; *u > utfmax[i]; ++i)
+		;
+	return i;
+}
+
+size_t
+utf8decode(const char *c, long *u, size_t clen)
+{
+	size_t i, j, len, type;
+	long udecoded;
+
+	*u = UTF_INVALID;
+	if (!clen)
+		return 0;
+	udecoded = utf8decodebyte(c[0], &len);
+	if (!BETWEEN(len, 1, UTF_SIZ))
+		return 1;
+	for (i = 1, j = 1; i < clen && j < len; ++i, ++j) {
+		udecoded = (udecoded << 6) | utf8decodebyte(c[i], &type);
+		if (type)
+			return j;
+	}
+	if (j < len)
+		return 0;
+	*u = udecoded;
+	utf8validate(u, len);
+
+	return len;
 }
 
 /*
@@ -100,6 +155,13 @@ daemonkickbyname(const char* name) {
       daemonkickbyindex(ii);
     }
   }
+}
+
+void
+daemonkickbyutf8charindex(int index /* 0-indexed */) {
+  union sigval sv;
+  sv.sival_int = index;
+  sigqueue(daemonpid(), SIGUSR1, sv);
 }
 
 /*
@@ -198,6 +260,44 @@ sighandler(int signo) {
   }
 }
 
+// utf8index handler
+static void
+handler(int sig, siginfo_t *si, void *ucontext)
+{
+  const int cindex = si->si_value.sival_int;
+  printf("handler @ cindex = %d\n", cindex);
+  if (cindex < 0)
+    return;
+
+  size_t csize;
+  long u;
+  char *ptr = statusbuf;
+  char *ptr2;
+
+  int delimcount = 0;
+  int ccount = 0;
+  int cplus = 0;
+  for (int byteindex = 0; statusbuf[byteindex] != '\0'; ccount += cplus) {
+    if (!strncmp(delim, statusbuf + byteindex, sizeof(delim) - 1)) {
+
+      ++delimcount;
+      cplus = numcdelim;
+      byteindex += sizeof(delim) - 1;
+      if (ccount + cplus > cindex) {
+        return;
+      }
+    } else {
+      csize = utf8decode(statusbuf + byteindex, &u, 6);
+      cplus = 1;
+      byteindex += csize;
+    }
+    if (ccount >= cindex) {
+      runbrickcmd(delimcount);
+      return;
+    }
+  }
+}
+
 int
 main(int argc, char** argv) {
   /* Parse args */
@@ -209,27 +309,26 @@ main(int argc, char** argv) {
       printf("%u\n", daemonpid());
       exit(0);
     }
+    else if (!strcmp("kill", argv[1])) {
+      daemonkill();
+      exit(0);
+    }
     else if (!strcmp("kick", argv[1])) {
       if (argc == 4) {
         if (!strcmp("--index", argv[2]))
           daemonkickbyindex(strtoul(argv[3], NULL, 10));
         else if (!strcmp("--signal", argv[2]))
           daemonkickbysignal(strtoul(argv[3], NULL, 10));
+        else if (!strcmp("--utf8index", argv[2])) {
+          daemonkickbyutf8charindex(strtol(argv[3], NULL, 10));
+        }
         else if (!strcmp("--name", argv[2]))
           daemonkickbyname(argv[3]);
+        else
+          die("Invalid arguments.");
       }
-      else if (argc == 3)
-        daemonkickbyname(argv[2]);
       else
         die("Invalid arguments.");
-      exit(0);
-    }
-    else if (argc == 3 && !strcmp("--daemonkickbysignal", argv[1])) {
-      unsigned int sig = strtoul(argv[2], NULL, 10);
-      daemonkickbysignal(sig);
-      exit(0);
-    } else if (argc == 3 && !strcmp("--daemonkickbyname", argv[1])) {
-      daemonkickbyname(argv[2]);
       exit(0);
     } else {
       die("Invalid arguments.");
@@ -246,6 +345,17 @@ main(int argc, char** argv) {
     unsigned int sig = SIGRTMIN + (bricks + ii)->signal;
     if (signal(sig, sighandler) == SIG_ERR)
       die("Cannot register user signal %u:", (bricks + ii)->signal);
+  }
+  struct sigaction sa;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_sigaction = handler;
+  sa.sa_flags = SA_SIGINFO; /* Important. */
+  sigaction(SIGUSR1, &sa, NULL);
+
+  /* Misc setup */
+  long u;
+  for (int ii = 0; delim[ii] != '\0'; numcdelim++) {
+    ii += utf8decode(delim + ii, &u, 6);
   }
 
   /* Create pid file */
@@ -272,7 +382,7 @@ main(int argc, char** argv) {
   while (true) {
     collect();
     writestatus();
-    sleep(1);
+    sleep(100);
     for(int ii = 0; ii < NUMELEM(bricks); ii++) {
       if ((bricks + ii)->interval > 0 && timesec % (bricks + ii)->interval == 0)
         runbrickcmd(ii);
@@ -302,3 +412,8 @@ main(int argc, char** argv) {
 //     The single-threaded nature of this requires that execution times of
 //     brick commands be minimal. This poses a problem for bricks whose
 //     commands take longer to execute (e.g. curling any remote service).
+//
+// TODO(maybe): Optimize UTF-8 implementation.
+//
+//     utf8...(..) copied from dwm source. Might be overkill as I just need
+//     to extract the lengths of valid UTF-8 byte sequences.
