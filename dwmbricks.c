@@ -265,7 +265,6 @@ static void
 handler(int sig, siginfo_t *si, void *ucontext)
 {
   const int cindex = si->si_value.sival_int;
-  printf("handler @ cindex = %d\n", cindex);
   if (cindex < 0)
     return;
 
@@ -382,7 +381,7 @@ main(int argc, char** argv) {
   while (true) {
     collect();
     writestatus();
-    sleep(100);
+    sleep(1);
     for(int ii = 0; ii < NUMELEM(bricks); ii++) {
       if ((bricks + ii)->interval > 0 && timesec % (bricks + ii)->interval == 0)
         runbrickcmd(ii);
