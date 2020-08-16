@@ -61,7 +61,7 @@ die(const char *fmt, ...) {
   exit(1);
 }
 
-#define UTF_SIZ     4
+#define UTF_SIZ 4
 #define UTF_INVALID 0xFFFD
 
 static const unsigned char utfbyte[UTF_SIZ + 1] = {0x80,    0, 0xC0, 0xE0, 0xF0};
@@ -135,6 +135,8 @@ void
 daemonkickbyindex(unsigned int brickid) {
   assert(brickid < NUMELEM(bricks));
 
+  /* TODO: Encode brickid into signal payload and remove RT signals. */
+
   daemonkickbysignal((bricks + brickid)->signal);
 }
 
@@ -148,6 +150,9 @@ daemonkickbysignal(pid_t usersigno) {
   kill(daemonpid(), SIGRTMIN + usersigno);
 }
 
+/*
+ //... asd
+ */
 void
 daemonkickbyname(const char* name) {
   for (int ii = 0; ii < NUMELEM(bricks); ++ii) {
@@ -158,9 +163,22 @@ daemonkickbyname(const char* name) {
 }
 
 void
-daemonkickbyutf8charindex(int index /* 0-indexed */) {
+daemonkickbyutf8charindex(unsigned int index /* 0-indexed */) {
+  assert(index < 256); /* Index shall fit in a single byte */ 
+
+  unsigned int b;
+  char *penv;
+
+  /* Retrieve $BUTTON from environment (valid values are {1, 2, ..}) */
+  if ((penv = getenv("BUTTON")) != NULL) {
+    b = strtoul(penv, NULL, 10); // 0 if invalid, no need to check
+  }
+  /* Encode $BUTTON and index into payload */
+  int payload = (index & 0xFF) | ((b & 0xFF) << 8);
+
+  /* Fire */
   union sigval sv;
-  sv.sival_int = index;
+  sv.sival_int = payload;
   sigqueue(daemonpid(), SIGUSR1, sv);
 }
 
@@ -260,18 +278,11 @@ sighandler(int signo) {
   }
 }
 
-// utf8index handler
-static void
-handler(int sig, siginfo_t *si, void *ucontext)
-{
-  const int cindex = si->si_value.sival_int;
-  if (cindex < 0)
-    return;
-
+static
+int brickfromcharindex(unsigned int cindex) {
   size_t csize;
   long u;
   char *ptr = statusbuf;
-  char *ptr2;
 
   int delimcount = 0;
   int ccount = 0;
@@ -283,7 +294,7 @@ handler(int sig, siginfo_t *si, void *ucontext)
       cplus = numcdelim;
       byteindex += sizeof(delim) - 1;
       if (ccount + cplus > cindex) {
-        return;
+        return delimcount;
       }
     } else {
       csize = utf8decode(statusbuf + byteindex, &u, 6);
@@ -291,9 +302,31 @@ handler(int sig, siginfo_t *si, void *ucontext)
       byteindex += csize;
     }
     if (ccount >= cindex) {
-      runbrickcmd(delimcount);
-      return;
+      return delimcount;
     }
+  }
+  return -1;
+}
+
+// utf8index handler
+static void
+sig_charidx(int sig, siginfo_t *si, void *ucontext)
+{
+  static char envs[16];
+  const int payload = si->si_value.sival_int;
+
+  /* Extract cindex & mbutton from signal data */
+  unsigned int cindex = payload & (0xFF);
+  unsigned int mbutton = (payload & (0xFF00)) >> 8;
+  if (cindex < 0)
+    return;
+
+  int bindex = brickfromcharindex(cindex);
+  if (bindex >= 0) {
+    sprintf(envs, "BUTTON=%u", mbutton);
+    putenv(envs);
+    runbrickcmd(bindex);
+    unsetenv("BUTTON");
   }
 }
 
@@ -319,7 +352,10 @@ main(int argc, char** argv) {
         else if (!strcmp("--signal", argv[2]))
           daemonkickbysignal(strtoul(argv[3], NULL, 10));
         else if (!strcmp("--utf8index", argv[2])) {
-          daemonkickbyutf8charindex(strtol(argv[3], NULL, 10));
+          long idx = strtol(argv[3], NULL, 10);
+          if (idx < 0)
+            die("Index must be ≥ 0.");
+          daemonkickbyutf8charindex((unsigned int)idx);
         }
         else if (!strcmp("--name", argv[2]))
           daemonkickbyname(argv[3]);
@@ -347,7 +383,7 @@ main(int argc, char** argv) {
   }
   struct sigaction sa;
   sigemptyset(&sa.sa_mask);
-  sa.sa_sigaction = handler;
+  sa.sa_sigaction = sig_charidx;
   sa.sa_flags = SA_SIGINFO; /* Important. */
   sigaction(SIGUSR1, &sa, NULL);
 
