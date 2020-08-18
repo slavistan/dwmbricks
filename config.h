@@ -2,15 +2,15 @@
 #define OUTBUFSIZE 32
 
 /* File containing the daemon's pid */
-#define PIDFILEPATH "/tmp/dwmbricks-pid"
+const char PIDFILEPATH[] = "/tmp/dwmbricks-pid";
 
 /* Bricks declaration */
-static const Brick bricks[] = {
-  /* Command        , Update Interval , Update Signal , Name */
+const Brick bricks[] = {
+  /* Command        , Update Interval , Update Signal , Tag */
   {"status ding"    , 0               , 4             , "test"}  ,
   {"status keymap"  , 0               , 1             , "xkb"}   ,
   {"status power"   , 60              , 2             , "power"} ,
-  {"status systime" , 1              , 3             , "time"}  ,
+  {"status systime" , 1               , 3             , "time"}  ,
 };
 
 /* Delimiter between bricks. */

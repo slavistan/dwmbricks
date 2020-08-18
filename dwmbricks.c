@@ -13,26 +13,16 @@
 #include <unistd.h>
 #include <X11/Xlib.h>
 
-#define NUMELEM(X) (sizeof(X) / sizeof (X[0]))
-#define BETWEEN(X, A, B)        ((A) <= (X) && (X) <= (B))
-
-typedef struct {
-  char* command;
-  unsigned int interval;
-  unsigned int signal;
-  char* name;
-} Brick;
+#include "dwmbricks.h"
+#include "util.h"
+#include "cli.h"
 
 #include "config.h"
 
-void cleanup(bool);
-void collect(void);
-pid_t daemonpid(void);
-void daemonkickbyindex(unsigned int);
-void daemonkickbysignal(pid_t usersigno);
-void die(const char *fmt, ...);
-void setroot(void);
-void sighandler(int signum);
+static void cleanup(bool);
+static void collect(void);
+static void setroot(void);
+static void sighandler(int signum);
 
 static Display *dpy;
 static int screen;
@@ -40,161 +30,13 @@ static Window root;
 /* Array of buffers to store commands' outputs */
 static char cmdoutbuf[NUMELEM(bricks)][OUTBUFSIZE + 1] = {0};
 /* Buffer containing the fully concatenated status string */
-static char statusbuf[NUMELEM(bricks) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0};
+static char stext[NUMELEM(bricks) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0};
 /* Dispatcher function */
 static void (*writestatus) () = setroot;
 /* Number of utf8-chars in delim (not counting '\0') */
-static int numcdelim;
+static unsigned int numcdelim;
+unsigned int numbricks = NUMELEM(bricks);
 
-void
-die(const char *fmt, ...) {
-  va_list ap;
-  va_start(ap, fmt);
-  vfprintf(stderr, fmt, ap);
-  va_end(ap);
-  if (fmt[0] && fmt[strlen(fmt)-1] == ':') {
-    fputc(' ', stderr);
-    perror(NULL);
-  } else {
-    fputc('\n', stderr);
-  }
-  exit(1);
-}
-
-#define UTF_SIZ 4
-#define UTF_INVALID 0xFFFD
-
-static const unsigned char utfbyte[UTF_SIZ + 1] = {0x80,    0, 0xC0, 0xE0, 0xF0};
-static const unsigned char utfmask[UTF_SIZ + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
-static const long utfmin[UTF_SIZ + 1] = {       0,    0,  0x80,  0x800,  0x10000};
-static const long utfmax[UTF_SIZ + 1] = {0x10FFFF, 0x7F, 0x7FF, 0xFFFF, 0x10FFFF};
-
-/*
- * Decode a single UTF-8 byte.
- *
- * If c is a continuation byte, sets i=0 and returns the value of the data bits.
- * If c is a leading byte, returns the value of the data bits and sets i to the
- * number of bytes in the UTF-8 sequence. Sets i=5 for non-UTF-8 bytes.
- */
-static long
-utf8decodebyte(const char c, size_t *i)
-{
-	for (*i = 0; *i < (UTF_SIZ + 1); ++(*i))
-		if (((unsigned char)c & utfmask[*i]) == utfbyte[*i])
-			return (unsigned char)c & ~utfmask[*i];
-	return 0;
-}
-
-static size_t
-utf8validate(long *u, size_t i)
-{
-	if (!BETWEEN(*u, utfmin[i], utfmax[i]) || BETWEEN(*u, 0xD800, 0xDFFF))
-		*u = UTF_INVALID;
-	for (i = 1; *u > utfmax[i]; ++i)
-		;
-	return i;
-}
-
-size_t
-utf8decode(const char *c, long *u, size_t clen)
-{
-	size_t i, j, len, type;
-	long udecoded;
-
-	*u = UTF_INVALID;
-	if (!clen)
-		return 0;
-	udecoded = utf8decodebyte(c[0], &len);
-	if (!BETWEEN(len, 1, UTF_SIZ))
-		return 1;
-	for (i = 1, j = 1; i < clen && j < len; ++i, ++j) {
-		udecoded = (udecoded << 6) | utf8decodebyte(c[i], &type);
-		if (type)
-			return j;
-	}
-	if (j < len)
-		return 0;
-	*u = udecoded;
-	utf8validate(u, len);
-
-	return len;
-}
-
-/*
- * Retrieve the running daemon's pid
- */
-pid_t daemonpid(void) {
-  FILE* pidfile = fopen(PIDFILEPATH, "r");
-  if (!pidfile)
-    die("Cannot open PID-file:");
-  int buflen = 16;
-  char buf[buflen];
-  if (!fgets(buf, buflen, pidfile))
-    die("Cannot read from PID-file:");
-  return (pid_t)strtoul(buf, NULL, 10);
-}
-
-/*
- * Trigger execution of a brick's command in the running daemon.
- * Sends the according brick's signal to the daemon.
- */
-void
-daemonkickbyindex(unsigned int brickid) {
-  assert(brickid < NUMELEM(bricks));
-
-  /* TODO: Encode brickid into signal payload and remove RT signals. */
-
-  daemonkickbysignal((bricks + brickid)->signal);
-}
-
-/*
- * Send user signal to daemon.
- */
-void
-daemonkickbysignal(pid_t usersigno) {
-  assert(0 <= usersigno && usersigno <= (SIGRTMAX - SIGRTMIN));
-
-  kill(daemonpid(), SIGRTMIN + usersigno);
-}
-
-/*
- //... asd
- */
-void
-daemonkickbyname(const char* name) {
-  for (int ii = 0; ii < NUMELEM(bricks); ++ii) {
-    if (!strcmp(name, (bricks + ii)->name)) {
-      daemonkickbyindex(ii);
-    }
-  }
-}
-
-void
-daemonkickbyutf8charindex(unsigned int index /* 0-indexed */) {
-  assert(index < 256); /* Index shall fit in a single byte */ 
-
-  unsigned int b;
-  char *penv;
-
-  /* Retrieve $BUTTON from environment (valid values are {1, 2, ..}) */
-  if ((penv = getenv("BUTTON")) != NULL) {
-    b = strtoul(penv, NULL, 10); // 0 if invalid, no need to check
-  }
-  /* Encode $BUTTON and index into payload */
-  int payload = (index & 0xFF) | ((b & 0xFF) << 8);
-
-  /* Fire */
-  union sigval sv;
-  sv.sival_int = payload;
-  sigqueue(daemonpid(), SIGUSR1, sv);
-}
-
-/*
- * Terminate daemon.
- */
-void daemonkill(void) {
-  kill(daemonpid(), SIGTERM);
-}
 
 /*
  * Remove PID-file.
@@ -228,11 +70,11 @@ runbrickcmd(unsigned int brickid) {
  */
 void
 collect(void) {
-  statusbuf[0] = '\0';
+  stext[0] = '\0';
   for(int ii = 0; ii < NUMELEM(bricks); ii++) {
-    strcat(statusbuf, cmdoutbuf[ii]);
+    strcat(stext, cmdoutbuf[ii]);
     if (ii < NUMELEM(bricks) - 1) {
-      strcat(statusbuf, delim);
+      strcat(stext, delim);
     }
   }
 }
@@ -247,7 +89,7 @@ setroot(void) {
     dpy = d;
   screen = DefaultScreen(dpy);
   root = RootWindow(dpy, screen);
-  XStoreName(dpy, root, statusbuf);
+  XStoreName(dpy, root, stext);
   XCloseDisplay(dpy);
 }
 
@@ -256,7 +98,7 @@ setroot(void) {
  */
 void
 pstdout(void) {
-  printf("%s\n", statusbuf);
+  printf("%s\n", stext);
   fflush(stdout);
 }
 
@@ -283,6 +125,20 @@ sighandler(int signo) {
     case SIGHUP:
       cleanup(true); break;
   }
+}
+
+/*
+ * Retrieve bricks by tag encoded as bitmask.
+ */
+static unsigned long long
+brickfromtag(const char* tag)
+{
+  unsigned long long mask = 0;
+  for (unsigned int ii = 0; ii < NUMELEM(bricks); ++ii) {
+    if (!strcmp(bricks[ii].tag, tag))
+      mask |= (1 << (unsigned long long)ii);
+  }
+  return mask;
 }
 
 /*
@@ -349,7 +205,7 @@ main(int argc, char** argv) {
       writestatus = pstdout;
     }
     else if (!strcmp("pid", argv[1])) {
-      printf("%u\n", daemonpid());
+      printf("%u\n", getpid());
       exit(0);
     }
     else if (!strcmp("kill", argv[1])) {
@@ -362,11 +218,11 @@ main(int argc, char** argv) {
           daemonkickbyindex(strtoul(argv[3], NULL, 10));
         else if (!strcmp("--signal", argv[2]))
           daemonkickbysignal(strtoul(argv[3], NULL, 10));
-        else if (!strcmp("--utf8index", argv[2])) {
+        else if (!strcmp("--charindex", argv[2])) {
           long idx = strtol(argv[3], NULL, 10);
           if (idx < 0)
             die("Index must be ≥ 0.");
-          daemonkickbyutf8charindex((unsigned int)idx);
+          daemonkickbycharindex((unsigned int)idx);
         }
         else if (!strcmp("--name", argv[2]))
           daemonkickbyname(argv[3]);
@@ -399,19 +255,23 @@ main(int argc, char** argv) {
   sigaction(SIGUSR1, &sa, NULL);
 
   /* Misc setup */
-  long u;
-  for (int ii = 0; delim[ii] != '\0'; numcdelim++) {
-    ii += utf8decode(delim + ii, &u, 6);
+  size_t clen;
+  for (char *ptr = delim; *ptr != '\0'; ptr+=clen) {
+    utf8decodebyte(*ptr, &clen);
+    if (clen > UTF_SIZ || clen == 0)
+      die("Delimiter contains invalid UTF-8.");
+    numcdelim += clen;
   }
 
   /* Create pid file */
   if (access(PIDFILEPATH, F_OK) != -1) {
-    pid_t pid = daemonpid();
+    pid_t pid = getdaemonpid();
     if (!kill(pid, 0))
       die("Daemon already running.");
     else
       cleanup(false);
   }
+  printf("dingo!\n");
   FILE* pidfile = fopen(PIDFILEPATH, "w");
   if (!pidfile)
     die("Cannot open file\n");
@@ -430,7 +290,7 @@ main(int argc, char** argv) {
     writestatus();
     sleep(1);
     for(int ii = 0; ii < NUMELEM(bricks); ii++) {
-      if ((bricks + ii)->interval > 0 && timesec % (bricks + ii)->interval == 0)
+      if ((bricks + ii)->interval > 0 && (timesec % (bricks + ii)->interval) == 0)
         runbrickcmd(ii);
     }
     ++timesec;
@@ -459,7 +319,4 @@ main(int argc, char** argv) {
 //     brick commands be minimal. This poses a problem for bricks whose
 //     commands take longer to execute (e.g. curling any remote service).
 //
-// TODO(maybe): Optimize UTF-8 implementation.
-//
-//     utf8...(..) copied from dwm source. Might be overkill as I just need
-//     to extract the lengths of valid UTF-8 byte sequences.
+//  TODO(fix): Check correct usage of integral types.
