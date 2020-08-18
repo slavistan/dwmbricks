@@ -69,6 +69,13 @@ static const unsigned char utfmask[UTF_SIZ + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8}
 static const long utfmin[UTF_SIZ + 1] = {       0,    0,  0x80,  0x800,  0x10000};
 static const long utfmax[UTF_SIZ + 1] = {0x10FFFF, 0x7F, 0x7FF, 0xFFFF, 0x10FFFF};
 
+/*
+ * Decode a single UTF-8 byte.
+ *
+ * If c is a continuation byte, sets i=0 and returns the value of the data bits.
+ * If c is a leading byte, returns the value of the data bits and sets i to the
+ * number of bytes in the UTF-8 sequence. Sets i=5 for non-UTF-8 bytes.
+ */
 static long
 utf8decodebyte(const char c, size_t *i)
 {
@@ -278,34 +285,38 @@ sighandler(int signo) {
   }
 }
 
+/*
+ * Retrieve brick index from UTF-8 character index in status
+ *
+ * Returns -1 iff cindex belongs to a delimiter
+ *         -2 if  status text contains invalid UTF-8
+ *         -3 iff cindex is out of range
+ */
 static
 int brickfromcharindex(unsigned int cindex) {
-  size_t csize;
-  long u;
-  char *ptr = statusbuf;
+  size_t ccount, clen, delimcount;
+  char *ptr;
 
-  int delimcount = 0;
-  int ccount = 0;
-  int cplus = 0;
-  for (int byteindex = 0; statusbuf[byteindex] != '\0'; ccount += cplus) {
-    if (!strncmp(delim, statusbuf + byteindex, sizeof(delim) - 1)) {
-
-      ++delimcount;
-      cplus = numcdelim;
-      byteindex += sizeof(delim) - 1;
-      if (ccount + cplus > cindex) {
-        return delimcount;
-      }
+  delimcount = ccount = 0;
+  ptr = stext;
+  while (*ptr != '\0') {
+    if (!strncmp(delim, ptr, sizeof(delim)-1)) {
+      ccount += numcdelim;
+      if (ccount > cindex)
+        return -1; // cindex belongs to a delimiter
+      delimcount++;
+      ptr += sizeof(delim) - 1;
     } else {
-      csize = utf8decode(statusbuf + byteindex, &u, 6);
-      cplus = 1;
-      byteindex += csize;
-    }
-    if (ccount >= cindex) {
-      return delimcount;
+      if (ccount >= cindex)
+        return delimcount;
+      utf8decodebyte(*ptr, &clen);
+      if (clen == 0 || clen > UTF_SIZ)
+        return -2; // invalid UTF-8
+      ptr += clen;
+      ccount++;
     }
   }
-  return -1;
+  return -3; // cindex out of range
 }
 
 // utf8index handler
