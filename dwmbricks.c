@@ -66,7 +66,7 @@ runbrickcmd(unsigned int brickid) {
 }
 
 /*
- * Concatenates command outputs and inserts delimiters
+ * Concatenate command outputs and insert delimiters.
  */
 void
 collect(void) {
@@ -128,7 +128,7 @@ sighandler(int signo) {
 }
 
 /*
- * Retrieve bricks by tag encoded as bitmask.
+ * Retrieve bricks by tag encoded as a bitmask.
  */
 static unsigned long long
 brickfromtag(const char* tag)
@@ -271,7 +271,6 @@ main(int argc, char** argv) {
     else
       cleanup(false);
   }
-  printf("dingo!\n");
   FILE* pidfile = fopen(PIDFILEPATH, "w");
   if (!pidfile)
     die("Cannot open file\n");

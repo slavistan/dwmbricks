@@ -21,7 +21,6 @@ pid_t getdaemonpid(void) {
     die("Cannot read from PID-file\n");
   fclose(pidfile);
   pid_t pid = (pid_t)strtoul(buf, NULL, 10);
-  printf("pid = %u\n", pid);
   return pid;
 }
 
@@ -29,7 +28,7 @@ pid_t getdaemonpid(void) {
  * Terminate daemon.
  */
 void daemonkill(void) {
-  kill(getpid(), SIGTERM);
+  kill(getdaemonpid(), SIGTERM);
 }
 
 /*
@@ -39,7 +38,7 @@ void
 daemonkickbysignal(pid_t usersigno) {
   assert(0 <= usersigno && usersigno <= (SIGRTMAX - SIGRTMIN));
 
-  kill(getpid(), SIGRTMIN + usersigno);
+  kill(getdaemonpid(), SIGRTMIN + usersigno);
 }
 
 /*
@@ -71,7 +70,7 @@ daemonkickbycharindex(unsigned int index /* 0-indexed */) {
   /* Fire */
   union sigval sv;
   sv.sival_int = payload;
-  sigqueue(getpid(), SIGUSR1, sv);
+  sigqueue(getdaemonpid(), SIGUSR1, sv);
 }
 
 
