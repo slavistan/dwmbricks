@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+const char logfile[] = "/tmp/dwmbricks-log";
+
 static const unsigned char utfbyte[UTF_SIZ + 1] = {0x80,    0, 0xC0, 0xE0, 0xF0};
 static const unsigned char utfmask[UTF_SIZ + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
 
@@ -37,4 +39,14 @@ die(const char *fmt, ...) {
     fputc('\n', stderr);
   }
   exit(1);
+}
+
+void
+infof(const char *fmt, ...) {
+  FILE* fp = fopen(logfile, "a");
+	va_list ap;
+	va_start(ap, fmt);
+	vfprintf(fp, fmt, ap);
+	va_end(ap);
+  fclose(fp);
 }

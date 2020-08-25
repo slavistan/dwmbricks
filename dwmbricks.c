@@ -4,12 +4,12 @@
 #include <fcntl.h>
 #include <time.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/types.h>
+#include <limits.h>
 #include <unistd.h>
 #include <X11/Xlib.h>
 
@@ -19,7 +19,7 @@
 
 #include "config.h"
 
-static void cleanup(bool);
+static void cleanup(int);
 static void collect(void);
 static void setroot(void);
 static void sighandler(int signum);
@@ -28,21 +28,21 @@ static Display *dpy;
 static int screen;
 static Window root;
 /* Array of buffers to store commands' outputs */
-static char cmdoutbuf[NUMELEM(bricks)][OUTBUFSIZE + 1] = {0};
+static char cmdoutbuf[LENGTH(bricks)][OUTBUFSIZE + 1] = {0};
 /* Buffer containing the fully concatenated status string */
-static char stext[NUMELEM(bricks) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0};
+static char stext[LENGTH(bricks) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0};
 /* Dispatcher function */
 static void (*writestatus) () = setroot;
 /* Number of utf8-chars in delim (not counting '\0') */
 static unsigned int numcdelim;
-unsigned int numbricks = NUMELEM(bricks);
+unsigned int numbricks = LENGTH(bricks);
 
 
 /*
  * Remove PID-file.
  */
 void
-cleanup(bool exitafter) {
+cleanup(int exitafter) {
   if (access(PIDFILEPATH, F_OK) != -1)
     remove(PIDFILEPATH);
   if (exitafter)
@@ -54,7 +54,7 @@ cleanup(bool exitafter) {
  */
 void
 runbrickcmd(unsigned int brickid) {
-  assert(brickid < NUMELEM(bricks));
+  assert(brickid < LENGTH(bricks));
 
   printf("brick cmd %u\n", brickid);
 
@@ -71,9 +71,9 @@ runbrickcmd(unsigned int brickid) {
 void
 collect(void) {
   stext[0] = '\0';
-  for(int ii = 0; ii < NUMELEM(bricks); ii++) {
+  for(int ii = 0; ii < LENGTH(bricks); ii++) {
     strcat(stext, cmdoutbuf[ii]);
-    if (ii < NUMELEM(bricks) - 1) {
+    if (ii < LENGTH(bricks) - 1) {
       strcat(stext, delim);
     }
   }
@@ -107,38 +107,75 @@ pstdout(void) {
  */
 void
 sighandler(int signo) {
-  /* User RT-signals */
-  if (signo >= SIGRTMIN && signo <= SIGRTMAX) {
-    for (int ii = 0; ii < NUMELEM(bricks); ++ii) {
-      if ((bricks + ii)->signal + SIGRTMIN == signo)
-        runbrickcmd(ii);
-    }
-    return;
-  }
-
-  /* Normal signals */
   switch (signo) {
-    case SIGQUIT:
-    case SIGTERM:
-    case SIGINT:
-    case SIGSEGV:
-    case SIGHUP:
-      cleanup(true); break;
+    case SIGUSR1:
+      infof("sigusr1\n");
+      break;
+
+    case SIGUSR2:
+      infof("sigurs2\n");
+      break;
   }
 }
 
 /*
- * Retrieve bricks by tag encoded as a bitmask.
+ * Signal the daemon to execute a brick by its index. Brick index is encoded
+ * into the signal's data.
  */
-static unsigned long long
-brickfromtag(const char* tag)
+static void
+sigbrick(unsigned brickndx, unsigned mbutton)
+{
+  union sigval sv = { .sival_int = 0 };
+  unsigned *pdata = &sv.sival_int;
+  *pdata = (mbutton << (sizeof(unsigned) * CHAR_BIT - 3)) | brickndx;
+  sigqueue(getdaemonpid(), SIGUSR1, sv);
+}
+
+/*
+ * Retrieve bricks by tag encoded as a bitmask.
+ * TODO: Explicitly state the max num of bricks of 64.
+ */
+// static unsigned long long
+// tagmask(const char* tag)
+// {
+//   unsigned long long mask = 0;
+//   for (unsigned ii = 0; ii < LENGTH(bricks); ++ii) {
+//     if (!strcmp(bricks[ii].tag, tag))
+//       mask |= (1 << (unsigned long long)ii);
+//   }
+//   return mask;
+// }
+
+
+/*
+ * Signal the daemon to execute bricks whose tags match.
+ */
+static void
+sigtag(const char *tag, unsigned mbutton)
 {
   unsigned long long mask = 0;
-  for (unsigned int ii = 0; ii < NUMELEM(bricks); ++ii) {
+  for (unsigned ii = 0; ii < LENGTH(bricks); ++ii) {
     if (!strcmp(bricks[ii].tag, tag))
       mask |= (1 << (unsigned long long)ii);
   }
-  return mask;
+  for (unsigned ii = 0; mask; ii++) {
+    if (mask & (1 << ii)) {
+      sigbrick(ii, mbutton);
+    }
+  }
+}
+
+/*
+ * Signal the daemon to execute brick to which the UTF-8 character index
+ * belongs.
+ */
+static void
+sigchar(unsigned charndx, unsigned mbutton)
+{
+  union sigval sv = { .sival_int = 0 };
+  unsigned *pdata = &sv.sival_int;
+  *pdata = (mbutton << (sizeof(unsigned) * CHAR_BIT - 3)) | charndx;
+  sigqueue(getdaemonpid(), SIGUSR2, sv);
 }
 
 /*
@@ -148,8 +185,8 @@ brickfromtag(const char* tag)
  *         -2 if  status text contains invalid UTF-8
  *         -3 iff cindex is out of range
  */
-static
-int brickfromcharindex(unsigned int cindex) {
+static int
+brickfromcharindex(unsigned int charndx) {
   size_t ccount, clen, delimcount;
   char *ptr;
 
@@ -158,12 +195,12 @@ int brickfromcharindex(unsigned int cindex) {
   while (*ptr != '\0') {
     if (!strncmp(delim, ptr, sizeof(delim)-1)) {
       ccount += numcdelim;
-      if (ccount > cindex)
+      if (ccount > charndx)
         return -1; // cindex belongs to a delimiter
       delimcount++;
       ptr += sizeof(delim) - 1;
     } else {
-      if (ccount >= cindex)
+      if (ccount >= charndx)
         return delimcount;
       utf8decodebyte(*ptr, &clen);
       if (clen == 0 || clen > UTF_SIZ)
@@ -175,23 +212,18 @@ int brickfromcharindex(unsigned int cindex) {
   return -3; // cindex out of range
 }
 
-// utf8index handler
 static void
-sig_charidx(int sig, siginfo_t *si, void *ucontext)
+charhandler(int sig, siginfo_t *si, void *ucontext)
 {
-  static char envs[16];
-  const int payload = si->si_value.sival_int;
+  const unsigned data = *(unsigned*)(&si->si_value.sival_int);
+  const unsigned mbutton = data >> (sizeof(unsigned) * CHAR_BIT - 3);
+  const unsigned cindex = ((data << 3) >> 3);
 
-  /* Extract cindex & mbutton from signal data */
-  unsigned int cindex = payload & (0xFF);
-  unsigned int mbutton = (payload & (0xFF00)) >> 8;
-  if (cindex < 0)
-    return;
-
-  int bindex = brickfromcharindex(cindex);
+  const int bindex = brickfromcharindex(cindex);
   if (bindex >= 0) {
-    sprintf(envs, "BUTTON=%u", mbutton);
-    putenv(envs);
+    char envs[2] = "0";
+    envs[0] = (char)(mbutton + 48);
+    setenv("BUTTON", envs, 1);
     runbrickcmd(bindex);
     unsetenv("BUTTON");
   }
@@ -199,38 +231,25 @@ sig_charidx(int sig, siginfo_t *si, void *ucontext)
 
 int
 main(int argc, char** argv) {
-  /* Parse args */
-  if (argc > 1) {
-    if (!strcmp("-p", argv[1])) {
+  int mbutton = 0;
+  for (int ii = 1; ii < argc; ii++) {
+    if (!strcmp(argv[ii], "-m") && argc > ii) {
+      mbutton = strtol(argv[ii+1], NULL, 10);
+      break;
+    }
+  }
+  for (int ii = 1; ii < argc; ii++) {
+    if (!strcmp(argv[ii], "-p")) {
       writestatus = pstdout;
-    }
-    else if (!strcmp("pid", argv[1])) {
-      printf("%u\n", getpid());
+      break;
+    } else if (!strcmp(argv[ii], "-c") && argc > ii) {
+      sigchar(strtol(argv[ii+1], NULL, 10), mbutton);
       exit(0);
-    }
-    else if (!strcmp("kill", argv[1])) {
-      daemonkill();
+    } else if (!strcmp(argv[ii], "-b") && argc > ii) {
+      sigbrick(strtol(argv[ii+1], NULL, 10), mbutton);
       exit(0);
-    }
-    else if (!strcmp("kick", argv[1])) {
-      if (argc == 4) {
-        if (!strcmp("--index", argv[2]))
-          daemonkickbyindex(strtoul(argv[3], NULL, 10));
-        else if (!strcmp("--signal", argv[2]))
-          daemonkickbysignal(strtoul(argv[3], NULL, 10));
-        else if (!strcmp("--charindex", argv[2])) {
-          long idx = strtol(argv[3], NULL, 10);
-          if (idx < 0)
-            die("Index must be ≥ 0.");
-          daemonkickbycharindex((unsigned int)idx);
-        }
-        else if (!strcmp("--name", argv[2]))
-          daemonkickbyname(argv[3]);
-        else
-          die("Invalid arguments.");
-      }
-      else
-        die("Invalid arguments.");
+    } else if (!strcmp(argv[ii], "-t") && argc > ii) {
+      sigtag(argv[ii+1], mbutton);
       exit(0);
     } else {
       die("Invalid arguments.");
@@ -238,21 +257,17 @@ main(int argc, char** argv) {
   }
 
   /* Setup signals */
-  signal(SIGQUIT, sighandler);
-  signal(SIGTERM, sighandler);
-  signal(SIGINT, sighandler);
-  signal(SIGSEGV, sighandler);
-  signal(SIGHUP, sighandler);
-  for (int ii = 0; ii < NUMELEM(bricks); ++ii) {
-    unsigned int sig = SIGRTMIN + (bricks + ii)->signal;
-    if (signal(sig, sighandler) == SIG_ERR)
-      die("Cannot register user signal %u:", (bricks + ii)->signal);
-  }
+  signal(SIGQUIT, cleanup);
+  signal(SIGTERM, cleanup);
+  signal(SIGINT, cleanup);
+  signal(SIGSEGV, cleanup);
+  signal(SIGHUP, cleanup);
+
   struct sigaction sa;
   sigemptyset(&sa.sa_mask);
-  sa.sa_sigaction = sig_charidx;
+  sa.sa_sigaction = charhandler;
   sa.sa_flags = SA_SIGINFO; /* Important. */
-  sigaction(SIGUSR1, &sa, NULL);
+  sigaction(SIGUSR2, &sa, NULL);
 
   /* Misc setup */
   size_t clen;
@@ -269,7 +284,7 @@ main(int argc, char** argv) {
     if (!kill(pid, 0))
       die("Daemon already running.");
     else
-      cleanup(false);
+      cleanup(1);
   }
   FILE* pidfile = fopen(PIDFILEPATH, "w");
   if (!pidfile)
@@ -278,17 +293,17 @@ main(int argc, char** argv) {
   fclose(pidfile);
 
   /* Run all commands once */
-  for(int ii = 0; ii < NUMELEM(bricks); ii++) {
+  for(int ii = 0; ii < LENGTH(bricks); ii++) {
     runbrickcmd(ii);
   }
 
   /* Enter loop */
   unsigned int timesec = 0;
-  while (true) {
+  while (1) {
     collect();
     writestatus();
     sleep(1);
-    for(int ii = 0; ii < NUMELEM(bricks); ii++) {
+    for(int ii = 0; ii < LENGTH(bricks); ii++) {
       if ((bricks + ii)->interval > 0 && (timesec % (bricks + ii)->interval) == 0)
         runbrickcmd(ii);
     }

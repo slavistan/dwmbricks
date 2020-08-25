@@ -6,11 +6,12 @@ const char PIDFILEPATH[] = "/tmp/dwmbricks-pid";
 
 /* Bricks declaration */
 const Brick bricks[] = {
-  /* Command        , Update Interval , Update Signal , Tag */
-  {"status ding"    , 0               , 4             , "test"}  ,
-  {"status keymap"  , 0               , 1             , "xkb"}   ,
-  {"status power"   , 60              , 2             , "power"} ,
-  {"status systime" , 1               , 3             , "time"}  ,
+  /* Command          , Update Interval , Tag */
+  {"status ding"      , 0               , "test"}      ,
+  {"status backlight" , 0               , "backlight"} ,
+  {"status keymap"    , 0               , "xkb"}       ,
+  {"status power"     , 60              , "power"}     ,
+  {"status systime"   , 1               , "time"}      ,
 };
 
 /* Delimiter between bricks. */

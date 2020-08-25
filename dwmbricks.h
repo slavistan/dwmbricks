@@ -3,7 +3,6 @@
 typedef struct {
   char* command;
   unsigned int interval;
-  unsigned int signal; // TODO: remove
   char* tag;
 } Brick;
 
