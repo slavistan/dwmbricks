@@ -332,7 +332,7 @@ main(int argc, char** argv) {
   sa.sa_sigaction = usr1;
   sigaction(SIGUSR1, &sa, NULL);
 
-  /* Misc */
+  /* Determine number of utf8 chars in delim */
   size_t clen;
   for (char *ptr = delim; *ptr != '\0'; ptr+=clen) {
     utf8decodebyte(*ptr, &clen);
@@ -363,9 +363,12 @@ main(int argc, char** argv) {
 //
 //     Signals may cause a problems for
 //       1. collect(), as it reads from the command buffers (inconsistent data)
-//       2. runbrickcmd() outside the signal handlers (race condition)
+//       2. brickexec() outside the signal handlers (race condition)
 //     Block signals before execution.
 //
 // TODO(maybe): Use portable signal handling
 //
-//  TODO(fix): Check correct usage of integral types.
+// TODO(fix): Check correct usage of integral types.
+// TODO(feat): README.md
+// TODO(feat): Usage / manpage
+// TODO(fox): Remove redundant headers
