@@ -248,6 +248,7 @@ usr2(int sig, siginfo_t *si, void *ucontext)
   const unsigned mbutton = sigdata >> (sizeof(unsigned) * CHAR_BIT - 3);
   const unsigned charndx = ((sigdata << 3) >> 3);
   const int brickndx = brickfromchar(charndx);
+  infof("mbutton = %u, charndx = %u, brickndx = %d\n", mbutton, charndx, brickndx);
   if (brickndx >= 0)
     brickexec(brickndx, mbutton);
 }
@@ -338,7 +339,7 @@ main(int argc, char** argv) {
     utf8decodebyte(*ptr, &clen);
     if (clen > UTF_SIZ || clen == 0)
       die("Delimiter contains invalid UTF-8.");
-    numchardelim += clen;
+    numchardelim++;
   }
 
   /* Run all commands once */
