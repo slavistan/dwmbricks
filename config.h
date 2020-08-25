@@ -1,8 +1,11 @@
-/* Maximum size of a command's stdout (in bytes and excl. null-delim) */
+/* Maximum storage size of a command's output excl. null-delim */
 #define OUTBUFSIZE 32
 
+/* Logfile */
+const char logfile[] = "/tmp/dwmbricks-log";
+
 /* File containing the daemon's pid */
-const char PIDFILEPATH[] = "/tmp/dwmbricks-pid";
+const char pidfile[] = "/tmp/dwmbricks-pid";
 
 /* Bricks declaration */
 const Brick bricks[] = {
