@@ -367,8 +367,8 @@ main(int argc, char** argv) {
 //     Block signals before execution.
 //
 // TODO(maybe): Use portable signal handling
-//
 // TODO(fix): Check correct usage of integral types.
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
-// TODO(fox): Remove redundant headers
+// TODO(feat): License
+// TODO(fix): Remove redundant headers
