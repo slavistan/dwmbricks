@@ -18,4 +18,4 @@ const Brick bricks[] = {
 };
 
 /* Delimiter between bricks. */
-static char delim[] = " ｜ "; // TIL `char *arr != char arr[]'
+const static char delim[] = " ｜ "; // TIL `char *arr != char arr[]'
