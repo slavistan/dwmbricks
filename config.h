@@ -17,5 +17,5 @@ const Brick bricks[] = {
   {"status systime"   , 1               , "time"}      ,
 };
 
-/* Delimiter between bricks. */
-const static char delim[] = " ｜ "; // TIL `char *arr != char arr[]'
+/* Delimiter between command ouputs */
+const static char delim[] = " ｜ ";

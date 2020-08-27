@@ -335,7 +335,7 @@ main(int argc, char** argv) {
 
   /* Determine number of utf8 chars in delim */
   size_t clen;
-  for (char *ptr = delim; *ptr != '\0'; ptr+=clen) {
+  for (const char *ptr = delim; *ptr != '\0'; ptr+=clen) {
     utf8decodebyte(*ptr, &clen);
     if (clen > UTF_SIZ || clen == 0)
       die("Delimiter contains invalid UTF-8.");
