@@ -10,7 +10,6 @@ const char pidfile[] = "/tmp/dwmbricks-pid";
 /* Bricks declaration */
 const Brick bricks[] = {
   /* Command          , Update Interval , Tag */
-  {"status ding"      , 0               , "test"}      ,
   {"status backlight" , 0               , "backlight"} ,
   {"status keymap"    , 0               , "xkb"}       ,
   {"status power"     , 60              , "power"}     ,

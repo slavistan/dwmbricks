@@ -373,3 +373,4 @@ main(int argc, char** argv) {
 // TODO(feat): Usage / manpage
 // TODO(feat): License
 // TODO(fix): Remove redundant headers
+// TODO(feat): Mechanism to reload fully status
