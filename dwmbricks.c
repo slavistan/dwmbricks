@@ -303,6 +303,7 @@ main(int argc, char** argv) {
   }
 
   /* Create pid file */
+  // TODO(fix): Make pid file unique for each user
   if (LENGTH(bricks) == 0)
     die("Nothing to do.");
   if (access(pidfile, F_OK) != -1) {
