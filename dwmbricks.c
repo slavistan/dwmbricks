@@ -380,11 +380,8 @@ main(int argc, char** argv) {
   }
 }
 
-// TODO(maybe): Use portable signal handling
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
-// TODO(feat): License
-// TODO(feat): Mechanism to reload fully status
 // TODO(feat): Allow synchronous startup of daemon for scripting
 //   Currently, my boot script executes `dwmbricks &' and later calls
 //   `dwmbricks -t ...' at which point it is unclear whether the daemon
