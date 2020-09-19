@@ -14,7 +14,7 @@
 
 typedef struct {
   char* command;
-  unsigned int interval;
+  unsigned long interval;
   char* tag;
 } Brick;
 
@@ -46,7 +46,7 @@ static long utf8decodebyte(const char c, size_t *i);
 static char cmdoutbuf[LENGTH(bricks)][OUTBUFSIZE + 1] = {0}; /* per-brick stdout buffer */
 static char stext[LENGTH(bricks) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0}; /* status text buffer */
 static void (*writestatus) () = toxroot; /* dispatcher */
-static unsigned int delimlen; /* number of utf8 chars in delim */
+static unsigned delimlen; /* number of utf8 chars in delim */
 static char logfile[32];
 static char pidfile[32]; /* path to file containing pid */
 static sigset_t usrsigset; /* sigset for masking interrupts */
@@ -367,7 +367,7 @@ main(int argc, char** argv) {
     sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
   }
 
-  unsigned timesec = 0;
+  unsigned long timesec = 0; 
   while (1) {
     sigprocmask(SIG_BLOCK, &usrsigset, NULL);
     collect();
@@ -375,7 +375,7 @@ main(int argc, char** argv) {
     writestatus();
     sleep(1);
     for(int ii = 0; ii < LENGTH(bricks); ii++) {
-      if ((bricks + ii)->interval > 0 && (timesec % (bricks + ii)->interval) == 0) {
+      if (bricks[ii],interval > 0 && timesec % bricks[ii].interval == 0) {
         sigprocmask(SIG_BLOCK, &usrsigset, NULL);
         brickexec(ii, 0);
         sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
@@ -386,7 +386,6 @@ main(int argc, char** argv) {
 }
 
 // TODO(maybe): Use portable signal handling
-// TODO(fix): Check correct usage of integral types.
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
 // TODO(feat): License
