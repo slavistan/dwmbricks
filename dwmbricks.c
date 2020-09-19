@@ -46,7 +46,7 @@ static long utf8decodebyte(const char c, size_t *i);
 static char cmdoutbuf[LENGTH(bricks)][OUTBUFSIZE + 1] = {0}; /* per-brick stdout buffer */
 static char stext[LENGTH(bricks) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0}; /* status text buffer */
 static void (*writestatus) () = toxroot; /* dispatcher */
-static unsigned int numchardelim; /* number of utf8 chars in delim */
+static unsigned int delimlen; /* number of utf8 chars in delim */
 static char logfile[32];
 static char pidfile[32]; /* path to file containing pid */
 static sigset_t usrsigset; /* sigset for masking interrupts */
@@ -83,26 +83,26 @@ brickexec(unsigned brickndx, unsigned mbutton) {
  */
 int
 brickfromchar(unsigned charndx) {
-  size_t ccount, clen, delimcount;
+  size_t charcount, charsize, delimcount;
   char *ptr;
 
-  delimcount = ccount = 0;
+  delimcount = charcount = 0;
   ptr = stext;
   while (*ptr != '\0') {
     if (!strncmp(delim, ptr, sizeof(delim)-1)) {
-      ccount += numchardelim;
-      if (ccount > charndx)
+      charcount += delimlen;
+      if (charcount > charndx)
         return -1; /* charndx belongs to a delimiter */
       delimcount++;
       ptr += sizeof(delim) - 1;
     } else {
-      if (ccount >= charndx)
+      if (charcount >= charndx)
         return delimcount;
-      utf8decodebyte(*ptr, &clen);
-      if (clen == 0 || clen > UTF_SIZ)
+      utf8decodebyte(*ptr, &charsize);
+      if (charsize == 0 || charsize > UTF_SIZ)
         return -2; /* invalid UTF-8 */
-      ptr += clen;
-      ccount++;
+      ptr += charsize;
+      charcount++;
     }
   }
   return -3; /* charndx out of range */
@@ -289,7 +289,7 @@ main(int argc, char** argv) {
     utf8decodebyte(*ptr, &clen);
     if (clen > UTF_SIZ || clen == 0)
       die("Delimiter contains invalid UTF-8.");
-    numchardelim++;
+    delimlen++;
   }
 
   /*
