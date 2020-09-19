@@ -28,7 +28,6 @@ static void cleanup(int);
 static void collect(void);
 static pid_t daemonpid(void);
 static void die(const char *fmt, ...);
-static void infof(const char *fmt, ...);
 static void sigbrick(unsigned, unsigned);
 static void sigchar(unsigned, unsigned);
 static void tostdout(void);
@@ -162,19 +161,6 @@ die(const char *fmt, ...) {
 }
 
 /*
- * Logging. Writes to logfile.
- */
-void
-infof(const char *fmt, ...) {
-  FILE* fp = fopen(logfile, "a");
-  va_list ap;
-  va_start(ap, fmt);
-  vfprintf(fp, fmt, ap);
-  va_end(ap);
-  fclose(fp);
-}
-
-/*
  * Signal the daemon to execute a brick by its index. Character index and
  * optional mouse button are encoded into the signal's data. Elicits
  * SIGUSR1. Called exclusively by the cli.
@@ -246,7 +232,6 @@ usr2(int sig, siginfo_t *si, void *ucontext)
   const unsigned mbutton = sigdata >> (sizeof(unsigned) * CHAR_BIT - 3);
   const unsigned charndx = ((sigdata << 3) >> 3);
   const int brickndx = brickfromchar(charndx);
-  infof("mbutton = %u, charndx = %u, brickndx = %d\n", mbutton, charndx, brickndx);
   if (brickndx >= 0)
     brickexec(brickndx, mbutton);
 }
@@ -370,7 +355,7 @@ main(int argc, char** argv) {
     writestatus();
     sleep(1);
     for(int ii = 0; ii < LENGTH(bricks); ii++) {
-      if (bricks[ii].interval > 0 && timesec % bricks[ii].interval == 0) {
+      if (bricks[ii].interval > 0 && (timesec % bricks[ii].interval == 0)) {
         sigprocmask(SIG_BLOCK, &usrsigset, NULL);
         brickexec(ii, 0);
         sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
