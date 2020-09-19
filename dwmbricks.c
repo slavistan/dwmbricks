@@ -276,7 +276,7 @@ main(int argc, char** argv) {
   /* Parse args */
   int mbutton = 0;
   for (int ii = 1; ii < argc; ii++) {
-    if (!strcmp(argv[ii], "-m") && argc > ii) {
+    if (!strcmp(argv[ii], "-m") && argc > ii + 1) {
       mbutton = strtol(argv[ii+1], NULL, 10);
       break;
     }
@@ -285,18 +285,18 @@ main(int argc, char** argv) {
     if (!strcmp(argv[ii], "-p")) {
       writestatus = tostdout;
       break;
-    } else if (!strcmp(argv[ii], "-c") && argc > ii) {
+    } else if (!strcmp(argv[ii], "-c") && argc > ii + 1) {
       sigchar(strtol(argv[ii+1], NULL, 10), mbutton);
-      exit(0);
-    } else if (!strcmp(argv[ii], "-b") && argc > ii) {
+      return 0;
+    } else if (!strcmp(argv[ii], "-b") && argc > ii + 1) {
       sigbrick(strtol(argv[ii+1], NULL, 10), mbutton);
-      exit(0);
-    } else if (!strcmp(argv[ii], "-t") && argc > ii) {
-      for (int ii = 0; ii < LENGTH(bricks); ii++) {
-        if (!strcmp(argv[ii+1], bricks[ii].tag))
-          sigbrick(ii, mbutton);
+      return 0;
+    } else if (!strcmp(argv[ii], "-t") && argc > ii + 1) {
+      for (int jj = 0; jj < LENGTH(bricks); jj++) {
+        if (!strcmp(argv[ii+1], bricks[jj].tag))
+          sigbrick(jj, mbutton);
       }
-      exit(0);
+      return 0;
     } else {
       die("Invalid arguments.");
     }
