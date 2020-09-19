@@ -5,7 +5,7 @@ CC = gcc
 
 dwmbricks: dwmbricks.o
 	$(CC) dwmbricks.o -lX11 -o dwmbricks
-dwmbricks.o: dwmbricks.c config.h
+dwmbricks.o:
 	$(CC) -c dwmbricks.c
 clean:
 	rm -f *.o *.gch dwmbricks
@@ -16,4 +16,4 @@ install: dwmbricks
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/dwmbricks
 
-.PHONY: clean install uninstall
+.PHONY: dwmbricks.o clean install uninstall
