@@ -25,7 +25,7 @@ static const unsigned char utfmask[UTF_SIZ + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8}
 static void brickexec(unsigned, unsigned);
 static int brickfromchar(unsigned);
 static void cleanup(int);
-static void collect(void);
+static void collectflush(void);
 static pid_t daemonpid(void);
 static void die(const char *fmt, ...);
 static void sigbrick(unsigned, unsigned);
@@ -39,7 +39,7 @@ static long utf8decodebyte(const char c, size_t *i);
 /* Static variables */
 static char cmdoutbuf[LENGTH(bricks)][OUTBUFSIZE + 1] = {0}; /* per-brick stdout buffer */
 static char stext[LENGTH(bricks) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0}; /* status text buffer */
-static void (*writestatus) () = toxroot; /* dispatcher */
+static void (*flushstatus) () = toxroot; /* dispatcher */
 static unsigned delimlen; /* number of utf8 chars in delim */
 static char logfile[32];
 static char pidfile[32]; /* path to file containing pid */
@@ -114,18 +114,17 @@ cleanup(int exitafter) {
 }
 
 /*
- * Concatenate bricks' commands outputs and insert delimiters. Masks signals
- * to guarantee atomic write access to stext. Called exclusively by daemon.
+ * Concatenate bricks' command outputs inserting delimiters and write out
+ * status text. Called exclusively by daemon.
  */
 void
-collect(void) {
+collectflush(void) {
   char *p = stext;
 
-  sigprocmask(SIG_BLOCK, &usrsigset, NULL);
   p = stpcpy(p, cmdoutbuf[0]);
   for(int ii = 1; ii < LENGTH(bricks); ii++)
     p = stpcpy(stpcpy(p, delim), cmdoutbuf[ii]);
-  sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
+  flushstatus();
 }
 
 /*
@@ -220,6 +219,7 @@ usr1(int sig, siginfo_t *si, void *ucontext)
   const unsigned mbutton = sigdata >> (sizeof(unsigned) * CHAR_BIT - 3);
   const unsigned brickndx = ((sigdata << 3) >> 3);
   brickexec(brickndx, mbutton);
+  collectflush();
 }
 
 /*
@@ -236,6 +236,7 @@ usr2(int sig, siginfo_t *si, void *ucontext)
   const int brickndx = brickfromchar(charndx);
   if (brickndx >= 0)
     brickexec(brickndx, mbutton);
+  collectflush();
 }
 
 /*
@@ -260,7 +261,7 @@ main(int argc, char** argv) {
   /*
    * Init static variables
    */
-  writestatus = toxroot;
+  flushstatus = toxroot;
   sprintf(logfile, "/tmp/dwmbricks-log-%d", getuid());
   sprintf(pidfile, "/tmp/dwmbricks-pid-%d", getuid());
   sigemptyset(&usrsigset);
@@ -286,7 +287,7 @@ main(int argc, char** argv) {
   }
   for (int ii = 1; ii < argc; ii++) {
     if (!strcmp(argv[ii], "-p")) {
-      writestatus = tostdout;
+      flushstatus = tostdout;
       break;
     } else if (!strcmp(argv[ii], "-c") && argc > ii + 1) {
       sigchar(strtol(argv[ii+1], NULL, 10), mbutton);
@@ -350,23 +351,28 @@ main(int argc, char** argv) {
   }
 
   unsigned long timesec = 0; 
+  int update = 1;
   while (1) {
-    sigprocmask(SIG_BLOCK, &usrsigset, NULL);
-    collect();
-    sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
-    writestatus();
+    if (update) {
+      sigprocmask(SIG_BLOCK, &usrsigset, NULL);
+      collectflush();
+      sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
+      update = 0;
+    }
     sleep(1);
     for(int ii = 0; ii < LENGTH(bricks); ii++) {
       if (bricks[ii].interval > 0 && (timesec % bricks[ii].interval == 0)) {
         sigprocmask(SIG_BLOCK, &usrsigset, NULL);
         brickexec(ii, 0);
         sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
+        update = 1;
       }
     }
     ++timesec;
   }
 }
 
+// TODO(feat): Semver
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
 // TODO(feat): Allow synchronous startup of daemon for scripting
