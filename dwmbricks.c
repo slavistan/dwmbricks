@@ -43,10 +43,13 @@ static void usr2(int, siginfo_t*, void*);
 static long utf8decodebyte(const char c, size_t *i);
 
 /* Static variables */
-static char cmdoutbuf[LENGTH(bricks)][OUTBUFSIZE + 1] = {0};                /* per-brick stdout buffer */
+static char cmdoutbuf[LENGTH(bricks)][OUTBUFSIZE + 1] = {0}; /* per-brick stdout buffer */
 static char stext[LENGTH(bricks) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0}; /* status text buffer */
-static void (*writestatus) () = toxroot;                                    /* dispatcher */
-static unsigned int numchardelim;                                           /* number of utf8 chars in delim */
+static void (*writestatus) () = toxroot; /* dispatcher */
+static unsigned int numchardelim; /* number of utf8 chars in delim */
+static char logfile[32];
+static char pidfile[32]; /* path to file containing pid */
+static sigset_t usrsigset; /* sigset for masking interrupts */
 
 /*
  * Run a brick's command and write its output to its personal buffer.
@@ -164,7 +167,7 @@ die(const char *fmt, ...) {
 }
 
 /*
- * Logging.
+ * Logging. Writes to logfile.
  */
 void
 infof(const char *fmt, ...) {
@@ -271,9 +274,27 @@ utf8decodebyte(const char c, size_t *i)
 
 int
 main(int argc, char** argv) {
-  writestatus = toxroot;
 
-  /* Parse args */
+  /*
+   * Init static variables
+   */
+  writestatus = toxroot;
+  sprintf(logfile, "/tmp/dwmbricks-log-%d", getuid());
+  sprintf(pidfile, "/tmp/dwmbricks-pid-%d", getuid());
+  sigemptyset(&usrsigset);
+  sigaddset(&usrsigset, SIGUSR1);
+  sigaddset(&usrsigset, SIGUSR2);
+  size_t clen;
+  for (const char *ptr = delim; *ptr != '\0'; ptr+=clen) {
+    utf8decodebyte(*ptr, &clen);
+    if (clen > UTF_SIZ || clen == 0)
+      die("Delimiter contains invalid UTF-8.");
+    numchardelim++;
+  }
+
+  /*
+   * Parse args
+   */
   int mbutton = 0;
   for (int ii = 1; ii < argc; ii++) {
     if (!strcmp(argv[ii], "-m") && argc > ii + 1) {
@@ -302,8 +323,9 @@ main(int argc, char** argv) {
     }
   }
 
-  /* Create pid file */
-  // TODO(fix): Make pid file unique for each user
+  /*
+   * Set up PID file
+   */
   if (LENGTH(bricks) == 0)
     die("Nothing to do.");
   if (access(pidfile, F_OK) != -1) {
@@ -319,7 +341,9 @@ main(int argc, char** argv) {
   fprintf(file, "%u\n", getpid());
   fclose(file);
 
-  /* Setup signals */
+  /*
+   * Setup signals
+   */
   signal(SIGQUIT, cleanup);
   signal(SIGTERM, cleanup);
   signal(SIGINT, cleanup);
@@ -334,40 +358,33 @@ main(int argc, char** argv) {
   sa.sa_sigaction = usr1;
   sigaction(SIGUSR1, &sa, NULL);
 
-  /* Determine number of utf8 chars in delim */
-  size_t clen;
-  for (const char *ptr = delim; *ptr != '\0'; ptr+=clen) {
-    utf8decodebyte(*ptr, &clen);
-    if (clen > UTF_SIZ || clen == 0)
-      die("Delimiter contains invalid UTF-8.");
-    numchardelim++;
+  /*
+   * Run all commands once and enter loop
+   */
+  for(int ii = 0; ii < LENGTH(bricks); ii++) {
+    sigprocmask(SIG_BLOCK, &usrsigset, NULL);
+    brickexec(ii, 0);
+    sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
   }
 
-  /* Run all commands once */
-  for(int ii = 0; ii < LENGTH(bricks); ii++)
-    brickexec(ii, 0);
-
-  /* Enter loop */
   unsigned timesec = 0;
   while (1) {
+    sigprocmask(SIG_BLOCK, &usrsigset, NULL);
     collect();
+    sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
     writestatus();
     sleep(1);
     for(int ii = 0; ii < LENGTH(bricks); ii++) {
-      if ((bricks + ii)->interval > 0 && (timesec % (bricks + ii)->interval) == 0)
+      if ((bricks + ii)->interval > 0 && (timesec % (bricks + ii)->interval) == 0) {
+        sigprocmask(SIG_BLOCK, &usrsigset, NULL);
         brickexec(ii, 0);
+        sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
+      }
     }
     ++timesec;
   }
 }
 
-// TODO(fix): Eliminate race conditions
-//
-//     Signals may cause a problems for
-//       1. collect(), as it reads from the command buffers (inconsistent data)
-//       2. brickexec() outside the signal handlers (race condition)
-//     Block signals before execution.
-//
 // TODO(maybe): Use portable signal handling
 // TODO(fix): Check correct usage of integral types.
 // TODO(feat): README.md
@@ -375,3 +392,8 @@ main(int argc, char** argv) {
 // TODO(feat): License
 // TODO(fix): Remove redundant headers
 // TODO(feat): Mechanism to reload fully status
+// TODO(feat): Allow synchronous startup of daemon for scripting
+//   Currently, my boot script executes `dwmbricks &' and later calls
+//   `dwmbricks -t ...' at which point it is unclear whether the daemon
+//   is ready to take signals or not. Some sort of `dwmbricks --fork'
+//   option should be sufficient
