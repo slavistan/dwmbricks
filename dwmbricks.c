@@ -1,13 +1,8 @@
 #include <stdarg.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <time.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 #include <signal.h>
-#include <sys/types.h>
 #include <limits.h>
 #include <unistd.h>
 #include <X11/Xlib.h>
@@ -375,7 +370,7 @@ main(int argc, char** argv) {
     writestatus();
     sleep(1);
     for(int ii = 0; ii < LENGTH(bricks); ii++) {
-      if (bricks[ii],interval > 0 && timesec % bricks[ii].interval == 0) {
+      if (bricks[ii].interval > 0 && timesec % bricks[ii].interval == 0) {
         sigprocmask(SIG_BLOCK, &usrsigset, NULL);
         brickexec(ii, 0);
         sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
@@ -389,7 +384,6 @@ main(int argc, char** argv) {
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
 // TODO(feat): License
-// TODO(fix): Remove redundant headers
 // TODO(feat): Mechanism to reload fully status
 // TODO(feat): Allow synchronous startup of daemon for scripting
 //   Currently, my boot script executes `dwmbricks &' and later calls
