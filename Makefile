@@ -6,7 +6,7 @@ CC = gcc
 dwmbricks: dwmbricks.o
 	$(CC) dwmbricks.o -lX11 -o dwmbricks
 dwmbricks.o:
-	$(CC) -c dwmbricks.c
+	$(CC) -g -c dwmbricks.c
 clean:
 	rm -f *.o *.gch dwmbricks
 install: dwmbricks

@@ -279,6 +279,7 @@ main(int argc, char** argv) {
    * Parse args
    */
   int mbutton = 0;
+  int dofork = 0;
   for (int ii = 1; ii < argc; ii++) {
     if (!strcmp(argv[ii], "-m") && argc > ii + 1) {
       mbutton = strtol(argv[ii+1], NULL, 10);
@@ -289,6 +290,8 @@ main(int argc, char** argv) {
     if (!strcmp(argv[ii], "-p")) {
       flushstatus = tostdout;
       break;
+    } else if (!strcmp(argv[ii], "-f")) {
+      dofork = 1;
     } else if (!strcmp(argv[ii], "-c") && argc > ii + 1) {
       sigchar(strtol(argv[ii+1], NULL, 10), mbutton);
       return 0;
@@ -342,6 +345,18 @@ main(int argc, char** argv) {
   sigaction(SIGUSR1, &sa, NULL);
 
   /*
+   * Fork here if so desired to allow for synchronous daemon startup
+   * TODO(fix): fork() must precede writing of pidfile.
+   */
+  pid_t pid;
+  if (dofork) {
+    if ((pid = fork()) < 0)
+      die("fork() failed:");
+    else if (pid > 0)
+      return 0;
+  }
+
+  /*
    * Run all commands once and enter loop
    */
   for(int ii = 0; ii < LENGTH(bricks); ii++) {
@@ -372,6 +387,9 @@ main(int argc, char** argv) {
   }
 }
 
+// TODO(feat): Improve cli args handling
+//   daemon arguments are not separated from cli arguments and nonsense like
+//   $0 -f -t keymap is possible
 // TODO(feat): Semver
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
