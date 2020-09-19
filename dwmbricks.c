@@ -114,16 +114,18 @@ cleanup(int exitafter) {
 }
 
 /*
- * Concatenate bricks' commands outputs and insert delimiters. Called
- * exclusively by daemon.
+ * Concatenate bricks' commands outputs and insert delimiters. Masks signals
+ * to guarantee atomic write access to stext. Called exclusively by daemon.
  */
 void
 collect(void) {
   char *p = stext;
 
+  sigprocmask(SIG_BLOCK, &usrsigset, NULL);
   p = stpcpy(p, cmdoutbuf[0]);
   for(int ii = 1; ii < LENGTH(bricks); ii++)
     p = stpcpy(stpcpy(p, delim), cmdoutbuf[ii]);
+  sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
 }
 
 /*
