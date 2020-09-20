@@ -400,3 +400,16 @@ main(int argc, char** argv) {
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
 // TODO(feat): Makefile best practices
+// TODO(future): Replace -m cli parameter with generic passing-on of envvars
+//   E.g. $0 -t "keymap" -e "BUTTON=3" -e "FLAG=FOO" ..
+//   This requires an additional communication channel between the cli and daemon
+//   to pass the environment strings through.
+//   Idea: Shared memory segment (single writer (cli)/single reader (daemon)).
+//         -e adds a flag to the signal's payload indicating that the shared
+//         memory segment shall be parsed for envvars.
+//         - Lock smem
+//         - Store old envval
+//         - load new envval from smem
+//         - Unlock smem
+//         - execbrick
+//         - restore old envval
