@@ -190,6 +190,20 @@ sigchar(unsigned charndx, unsigned mbutton)
 }
 
 /*
+ * Write pid into pidfile.
+ */
+void
+storedaemonpid(pid_t pid)
+{
+  FILE* file;
+  if (!(file = fopen(pidfile, "w")))
+    die("fopen() failed:");
+  fprintf(file, "%u\n", pid);
+  if (fclose(file))
+    die("fclose() failed:");
+}
+
+/*
  * Set x root win name to status text. Called exclusively by daemon.
  */
 void
@@ -258,9 +272,7 @@ utf8decodebyte(const char c, size_t *i)
 int
 main(int argc, char** argv) {
 
-  /*
-   * Init static variables
-   */
+  /* Runtime init */
   flushstatus = toxroot;
   sprintf(logfile, "/tmp/dwmbricks-log-%d", getuid());
   sprintf(pidfile, "/tmp/dwmbricks-pid-%d", getuid());
@@ -275,9 +287,7 @@ main(int argc, char** argv) {
     delimlen++;
   }
 
-  /*
-   * Parse args
-   */
+  /* Parse args */
   int mbutton = 0;
   int dofork = 0;
   for (int ii = 1; ii < argc; ii++) {
@@ -309,9 +319,7 @@ main(int argc, char** argv) {
     }
   }
 
-  /*
-   * Set up PID file
-   */
+  /* Sanity checks */
   if (LENGTH(bricks) == 0)
     die("Nothing to do.");
   if (access(pidfile, F_OK) != -1) {
@@ -319,23 +327,37 @@ main(int argc, char** argv) {
     if (!kill(pid, 0))
       die("Daemon already running.");
     else
-      cleanup(1);
+      cleanup(1); /* remove stale pid file */
   }
-  FILE* file = fopen(pidfile, "w");
-  if (!file)
-    die("Cannot open file pid-file.");
-  fprintf(file, "%u\n", getpid());
-  fclose(file);
 
-  /*
-   * Setup signals
-   */
+  /* Fork and wait for daemon startup to finish */
+  pid_t pid;
+  if (dofork) {
+    if ((pid = fork()) < 0)
+      die("fork() failed:");
+    if (pid > 0) {
+      storedaemonpid(pid);
+      sigset_t parentsigset;
+      int sig;
+      sigemptyset(&parentsigset);
+      sigaddset(&parentsigset, SIGQUIT);
+      sigwait(&parentsigset, &sig);
+      return 0;
+    }
+  } else
+    storedaemonpid(getpid());
+
+  /* Run all commands once */
+  for(int ii = 0; ii < LENGTH(bricks); ii++)
+    brickexec(ii, 0);
+  collectflush();
+
+  /* Set up signals */
   signal(SIGQUIT, cleanup);
   signal(SIGTERM, cleanup);
   signal(SIGINT, cleanup);
   signal(SIGSEGV, cleanup);
   signal(SIGHUP, cleanup);
-
   struct sigaction sa;
   sigemptyset(&sa.sa_mask);
   sa.sa_flags = SA_SIGINFO;
@@ -344,27 +366,11 @@ main(int argc, char** argv) {
   sa.sa_sigaction = usr1;
   sigaction(SIGUSR1, &sa, NULL);
 
-  /*
-   * Fork here if so desired to allow for synchronous daemon startup
-   * TODO(fix): fork() must precede writing of pidfile.
-   */
-  pid_t pid;
-  if (dofork) {
-    if ((pid = fork()) < 0)
-      die("fork() failed:");
-    else if (pid > 0)
-      return 0;
-  }
+  /* Signal to parent that daemon (child) is ready */
+  if (dofork)
+    kill(getppid(), SIGQUIT);
 
-  /*
-   * Run all commands once and enter loop
-   */
-  for(int ii = 0; ii < LENGTH(bricks); ii++) {
-    sigprocmask(SIG_BLOCK, &usrsigset, NULL);
-    brickexec(ii, 0);
-    sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
-  }
-
+  /* Superloop */
   unsigned long timesec = 0; 
   int update = 1;
   while (1) {
@@ -393,8 +399,4 @@ main(int argc, char** argv) {
 // TODO(feat): Semver
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
-// TODO(feat): Allow synchronous startup of daemon for scripting
-//   Currently, my boot script executes `dwmbricks &' and later calls
-//   `dwmbricks -t ...' at which point it is unclear whether the daemon
-//   is ready to take signals or not. Some sort of `dwmbricks --fork'
-//   option should be sufficient
+// TODO(feat): Makefile best practices
