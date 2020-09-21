@@ -1,8 +1,11 @@
+#define _GNU_SOURCE
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #include <limits.h>
 #include <unistd.h>
 #include <X11/Xlib.h>
@@ -15,9 +18,14 @@ typedef struct {
 
 #include "config.h"
 
+/* Macros */
 #define LENGTH(X) (sizeof(X) / sizeof (X[0]))
-#define UTF_SIZ 4
 
+/* Shmem */
+static const int shmsz = 4096; /* size of shmem segment in bytes */
+
+/* UTF-8 */
+#define UTF_SIZ 4
 static const unsigned char utfbyte[UTF_SIZ + 1] = {0x80,    0, 0xC0, 0xE0, 0xF0};
 static const unsigned char utfmask[UTF_SIZ + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
 
@@ -44,6 +52,8 @@ static unsigned delimlen; /* number of utf8 chars in delim */
 static char logfile[32];
 static char pidfile[32]; /* path to file containing pid */
 static sigset_t usrsigset; /* sigset for masking interrupts */
+static char *shm; /* shmem pointer */
+static int shmid = -1;
 
 /*
  * Run a brick's command and write its output to its personal buffer.
@@ -51,21 +61,73 @@ static sigset_t usrsigset; /* sigset for masking interrupts */
  * Called exclusively by daemon.
  */
 void
-brickexec(unsigned brickndx, unsigned mbutton) {
-  if (mbutton) {
-    char num[2] = "0";
-    num[0] = mbutton + 48;
-    setenv("BUTTON", num, 1);
+brickexec(unsigned brickndx, unsigned envcount) {
+
+  pid_t pid;
+  char * dummy[] = { NULL };
+
+  if (envcount) {
+    char** const pindex = (char**)shm;
+    char* const pdata = (char*)(pindex + envcount + 1);
+
+    /* load index array */
+    char **pi = pindex;
+    char *pd = pdata;
+    *pi = pd;
+    ++pi;
+    while (*pi) {
+      pd += strlen(pd) + 1; // TODO: Encode in pindex instead of using strlen
+      *pi = pd;
+      ++pi;
+    }
+
+    pi = pindex;
+    while (*pi) {
+      printf("env = %s\n", *pi);
+      pi++;
+    }
   }
 
-  FILE *cmdf = popen((bricks + brickndx)->command, "r");
-  if (!cmdf)
-    die("Opening pipe failed.");
-  fgets(cmdoutbuf[brickndx], OUTBUFSIZE + 1, cmdf);
-  pclose(cmdf);
+  if ((pid = fork()) < 0)
+    die("fork() failed:");
+  if (pid == 0) {
+    if (envcount > 0) {
+      char * envs[] = { "dummy", NULL };
+      execvpe(bricks[brickndx].command, envs, (char**)shm);
+    }
+    else
+      execvp(bricks[brickndx].command, dummy);
+    exit(0);
+  } else {
+    printf("parent!\n");
 
-  if (mbutton)
-    unsetenv("BUTTON");
+  }
+
+//    int corpse;
+//    int status;
+//    while ((corpse = wait(&status)) > 0 && corpse != pid)
+//        printf("Parent: child %d died with status 0x%.4X\n", corpse, status);
+//    char line[4096];
+//    if (fgets(line, sizeof(line), stdin) == 0)
+//    {
+//        fprintf(stderr, "Failed to read line in parent\n");
+//        exit(4);
+//    }
+//    while (fgets(line, sizeof(line), stdin) != 0)
+//    {
+//        line[strcspn(line, "\n")] = '\0';
+//        printf("Parent: read [%s]\n", line);
+//    }
+//  }
+//
+//  FILE *cmdf = popen((bricks + brickndx)->command, "r");
+//  if (!cmdf)
+//    die("Opening pipe failed.");
+//  fgets(cmdoutbuf[brickndx], OUTBUFSIZE + 1, cmdf);
+//  pclose(cmdf);
+//
+//  if (mbutton)
+//    unsetenv("BUTTON");
 }
 
 /*
@@ -107,6 +169,11 @@ brickfromchar(unsigned charndx) {
  */
 void
 cleanup(int exitafter) {
+  if (shmid >= 0) {
+    if (shm)
+      shmdt(shm);
+    shmctl(shmid, IPC_RMID, NULL);
+  }
   if (access(pidfile, F_OK) != -1)
     remove(pidfile);
   if (exitafter)
@@ -162,30 +229,32 @@ die(const char *fmt, ...) {
 }
 
 /*
+ * TODO: adjust doc
  * Signal the daemon to execute a brick by its index. Character index and
  * optional mouse button are encoded into the signal's data. Elicits
  * SIGUSR1. Called exclusively by the cli.
  */
 void
-sigbrick(unsigned brickndx, unsigned mbutton)
+sigbrick(unsigned brickndx, unsigned envcount)
 {
   union sigval sv = { .sival_int = 0 };
   unsigned *pdata = &sv.sival_int;
-  *pdata = (mbutton << (sizeof(unsigned) * CHAR_BIT - 3)) | brickndx;
+  *pdata = (envcount << (sizeof(unsigned) * CHAR_BIT - 3)) | brickndx;
   sigqueue(daemonpid(), SIGUSR1, sv);
 }
 
 /*
+ * TODO: adjust doc
  * Signal the daemon to execute brick to which the UTF-8 character at index
  * 'charndx' belongs. Character index and optional mouse button are encoded
  * into the signal's data. Elicits SIGURS2. Called exclusively by the cli.
  */
 void
-sigchar(unsigned charndx, unsigned mbutton)
+sigchar(unsigned charndx, unsigned envcount)
 {
   union sigval sv = { .sival_int = 0 };
   unsigned *pdata = &sv.sival_int;
-  *pdata = (mbutton << (sizeof(unsigned) * CHAR_BIT - 3)) | charndx;
+  *pdata = (envcount << (sizeof(unsigned) * CHAR_BIT - 3)) | charndx;
   sigqueue(daemonpid(), SIGUSR2, sv);
 }
 
@@ -225,31 +294,35 @@ tostdout(void) {
 /*
  * SIGUSR1 handler. Executes brick according to its index. Brick index and
  * mouse button are decoded from the signal's data.
+ * TODO: adjust doc
  */
 void
 usr1(int sig, siginfo_t *si, void *ucontext)
 {
   const unsigned sigdata = *(unsigned*)(&si->si_value.sival_int);
-  const unsigned mbutton = sigdata >> (sizeof(unsigned) * CHAR_BIT - 3);
+  const unsigned envcount = sigdata >> (sizeof(unsigned) * CHAR_BIT - 3);
   const unsigned brickndx = ((sigdata << 3) >> 3);
-  brickexec(brickndx, mbutton);
+  // load env
+  brickexec(brickndx, envcount);
   collectflush();
+  // unloadenv
 }
 
 /*
  * SIGUSR2 handler. Executes brick corresponding to utf8 character index
  * in the status text. Character index and mouse button are decoded from the
  * signal's data.
+ * TODO: adjust doc
  */
 void
 usr2(int sig, siginfo_t *si, void *ucontext)
 {
   const unsigned sigdata = *(unsigned*)(&si->si_value.sival_int);
-  const unsigned mbutton = sigdata >> (sizeof(unsigned) * CHAR_BIT - 3);
+  const unsigned envcount = sigdata >> (sizeof(unsigned) * CHAR_BIT - 3);
   const unsigned charndx = ((sigdata << 3) >> 3);
   const int brickndx = brickfromchar(charndx);
   if (brickndx >= 0)
-    brickexec(brickndx, mbutton);
+    brickexec(brickndx, envcount);
   collectflush();
 }
 
@@ -271,18 +344,19 @@ utf8decodebyte(const char c, size_t *i)
 
 int
 main(int argc, char** argv) {
+  key_t key;
 
   /* Runtime init */
   flushstatus = toxroot;
-  sprintf(logfile, "/tmp/dwmbricks-log-%d", getuid());
-  sprintf(pidfile, "/tmp/dwmbricks-pid-%d", getuid());
+  sprintf(logfile, "/tmp/dwmbricks-log-%d", getuid()); // TODO: ensure maxlen (snprintf)
+  sprintf(pidfile, "/tmp/dwmbricks-pid-%d", getuid()); // TODO: see above
   sigemptyset(&usrsigset);
   sigaddset(&usrsigset, SIGUSR1);
   sigaddset(&usrsigset, SIGUSR2);
-  size_t clen;
-  for (const char *ptr = delim; *ptr != '\0'; ptr+=clen) {
-    utf8decodebyte(*ptr, &clen);
-    if (clen > UTF_SIZ || clen == 0)
+  size_t charsize;
+  for (const char *ptr = delim; *ptr != '\0'; ptr+=charsize) {
+    utf8decodebyte(*ptr, &charsize);
+    if (charsize > UTF_SIZ || charsize == 0)
       die("Delimiter contains invalid UTF-8.");
     delimlen++;
   }
@@ -290,33 +364,58 @@ main(int argc, char** argv) {
   /* Parse args */
   int mbutton = 0;
   int dofork = 0;
-  for (int ii = 1; ii < argc; ii++) {
-    if (!strcmp(argv[ii], "-m") && argc > ii + 1) {
-      mbutton = strtol(argv[ii+1], NULL, 10);
-      break;
-    }
-  }
-  for (int ii = 1; ii < argc; ii++) {
-    if (!strcmp(argv[ii], "-p")) {
-      flushstatus = tostdout;
-      break;
-    } else if (!strcmp(argv[ii], "-f")) {
+  unsigned envcount;
+  switch (argc) {
+  case 1: /* daemon */
+    break;
+  case 2: /* daemon */
+    if (!strcmp(argv[1], "-f"))
       dofork = 1;
-    } else if (!strcmp(argv[ii], "-c") && argc > ii + 1) {
-      sigchar(strtol(argv[ii+1], NULL, 10), mbutton);
-      return 0;
-    } else if (!strcmp(argv[ii], "-b") && argc > ii + 1) {
-      sigbrick(strtol(argv[ii+1], NULL, 10), mbutton);
-      return 0;
-    } else if (!strcmp(argv[ii], "-t") && argc > ii + 1) {
-      for (int jj = 0; jj < LENGTH(bricks); jj++) {
-        if (!strcmp(argv[ii+1], bricks[jj].tag))
-          sigbrick(jj, mbutton);
-      }
-      return 0;
-    } else {
+    else if (!strcmp(argv[1], "-p"))
+      flushstatus = tostdout;
+    else
       die("Invalid arguments.");
+    break;
+  default: { /* cli */
+    if ((envcount = (argc - 3) / 2) > 0) {
+      /* shmem */
+      if ((key = ftok(pidfile, 1)) < 0)
+        die("ftok() failed:");
+      if ((shmid = shmget(key, shmsz, 0)) < 0)
+        die("shmget() failed:");
+      if ((shm = (char*)shmat(shmid, NULL, 0)) == (char*)-1)
+        die("shmat() failed:");
+
+      /* paste envvar strings into shmem */
+      char **pindex = (char**)shm;
+      const char *databegin = (char*)(pindex + envcount + 1);
+      char* pdata = databegin;
+      for (int ii = 0; ii < envcount; ++ii) {
+        pdata += sprintf(pdata, "%s", argv[4+ii*2]) + 1;
+        *pindex = databegin - pdata; // store offset (address useless for shmem)
+        pindex++;
+      }
+      *((char**)shm + envcount) = (char*)NULL;
     }
+
+    unsigned ndx;
+    if (!strcmp(argv[1], "-c")) {
+      ndx = strtoul(argv[2], NULL, 10);
+      sigchar(ndx, envcount);
+    } else if (!strcmp(argv[1], "-t")) {
+      for (int ii = 0; ii < LENGTH(bricks); ii++) {
+        if (!strcmp(argv[2], bricks[ii].tag)) {
+          sigbrick(ii, envcount);
+        }
+      }
+    } else if (!strcmp(argv[1], "-b")) {
+      ndx = strtoul(argv[2], NULL, 10);
+      sigbrick(ndx, envcount);
+    } else
+      die("Invalid arguments.");
+    return 0;
+    break;
+  }
   }
 
   /* Sanity checks */
@@ -327,7 +426,7 @@ main(int argc, char** argv) {
     if (!kill(pid, 0))
       die("Daemon already running.");
     else
-      cleanup(1); /* remove stale pid file */
+      cleanup(0); /* remove stale pid file */
   }
 
   /* Fork and wait for daemon startup to finish */
@@ -346,6 +445,14 @@ main(int argc, char** argv) {
     }
   } else
     storedaemonpid(getpid());
+
+  /* shmem setup (daemon reader, cli writer) */
+  if ((key = ftok(pidfile, 1)) < 0)
+    die("ftok() failed:");
+  if ((shmid = shmget(key, shmsz, IPC_CREAT | IPC_EXCL | 0600)) < 0)
+    die("shmget() failed:");
+  if ((shm = (char*)shmat(shmid, NULL, 0)) == (char*)-1)
+    die("shmat() failed:");
 
   /* Run all commands once */
   for(int ii = 0; ii < LENGTH(bricks); ii++)
