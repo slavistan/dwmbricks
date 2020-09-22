@@ -65,14 +65,19 @@ brickexec(unsigned brickndx, unsigned envcount) {
 
   pid_t pid;
   char * dummy[] = { NULL };
+  char **pi;
+  char *pd;
+  int fds[2];
+  FILE *file;
+
+  char** const pindex = (char**)shm;
+  char* const pdata = (char*)(pindex + envcount + 1);
 
   if (envcount) {
-    char** const pindex = (char**)shm;
-    char* const pdata = (char*)(pindex + envcount + 1);
 
     /* load index array */
-    char **pi = pindex;
-    char *pd = pdata;
+    pi = pindex;
+    pd = pdata;
     *pi = pd;
     ++pi;
     while (*pi) {
@@ -80,7 +85,6 @@ brickexec(unsigned brickndx, unsigned envcount) {
       *pi = pd;
       ++pi;
     }
-
     pi = pindex;
     while (*pi) {
       printf("env = %s\n", *pi);
@@ -88,46 +92,25 @@ brickexec(unsigned brickndx, unsigned envcount) {
     }
   }
 
+  pipe(fds);
   if ((pid = fork()) < 0)
     die("fork() failed:");
   if (pid == 0) {
     if (envcount > 0) {
-      char * envs[] = { "dummy", NULL };
-      execvpe(bricks[brickndx].command, envs, (char**)shm);
+      for (pi = pindex; *pi; pi++) {
+        putenv(*pi);
+      }
     }
-    else
-      execvp(bricks[brickndx].command, dummy);
-    exit(0);
+    close(fds[0]); // child doesn't read
+    dup2(fds[1], 1); // redirect child's stdout to write-end of pipe
+    execvp("sh", (const char*[]){ "sh", "-c", bricks[brickndx].command, NULL });
+    die("execvp() failed:");
   } else {
-    printf("parent!\n");
-
+    close(fds[1]); // parent doesn't write
+    file = fdopen(fds[0], "r");
+    fgets(cmdoutbuf[brickndx], OUTBUFSIZE, file);
+    close(file);
   }
-
-//    int corpse;
-//    int status;
-//    while ((corpse = wait(&status)) > 0 && corpse != pid)
-//        printf("Parent: child %d died with status 0x%.4X\n", corpse, status);
-//    char line[4096];
-//    if (fgets(line, sizeof(line), stdin) == 0)
-//    {
-//        fprintf(stderr, "Failed to read line in parent\n");
-//        exit(4);
-//    }
-//    while (fgets(line, sizeof(line), stdin) != 0)
-//    {
-//        line[strcspn(line, "\n")] = '\0';
-//        printf("Parent: read [%s]\n", line);
-//    }
-//  }
-//
-//  FILE *cmdf = popen((bricks + brickndx)->command, "r");
-//  if (!cmdf)
-//    die("Opening pipe failed.");
-//  fgets(cmdoutbuf[brickndx], OUTBUFSIZE + 1, cmdf);
-//  pclose(cmdf);
-//
-//  if (mbutton)
-//    unsetenv("BUTTON");
 }
 
 /*
@@ -189,8 +172,9 @@ collectflush(void) {
   char *p = stext;
 
   p = stpcpy(p, cmdoutbuf[0]);
-  for(int ii = 1; ii < LENGTH(bricks); ii++)
+  for(int ii = 1; ii < LENGTH(bricks); ii++) {
     p = stpcpy(stpcpy(p, delim), cmdoutbuf[ii]);
+  }
   flushstatus();
 }
 
@@ -302,10 +286,8 @@ usr1(int sig, siginfo_t *si, void *ucontext)
   const unsigned sigdata = *(unsigned*)(&si->si_value.sival_int);
   const unsigned envcount = sigdata >> (sizeof(unsigned) * CHAR_BIT - 3);
   const unsigned brickndx = ((sigdata << 3) >> 3);
-  // load env
   brickexec(brickndx, envcount);
   collectflush();
-  // unloadenv
 }
 
 /*
@@ -321,9 +303,10 @@ usr2(int sig, siginfo_t *si, void *ucontext)
   const unsigned envcount = sigdata >> (sizeof(unsigned) * CHAR_BIT - 3);
   const unsigned charndx = ((sigdata << 3) >> 3);
   const int brickndx = brickfromchar(charndx);
-  if (brickndx >= 0)
+  if (brickndx >= 0) {
     brickexec(brickndx, envcount);
-  collectflush();
+    collectflush();
+  }
 }
 
 /*
@@ -520,3 +503,6 @@ main(int argc, char** argv) {
 //         - Unlock smem
 //         - execbrick
 //         - restore old envval
+// TOOD(fix): cli allows missing -e
+//   e.g. dwmbricks -t dummy2 -e X=14 LEET=1337
+// TODO: Implement proper logging for daemon instead of die() everywhere

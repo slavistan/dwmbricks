@@ -9,7 +9,6 @@ const Brick bricks[] = {
   {"status power"     , 60              , "power"}     ,
   {"status systime"   , 1               , "time"}      ,
   {"status dummy"     , 0               , "dummy"}     ,
-  {"status"           , 0               , "dummy2"}     ,
 };
 
 /* Delimiter between command ouputs */
