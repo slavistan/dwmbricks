@@ -62,54 +62,62 @@ static int shmid = -1;
  */
 void
 brickexec(unsigned brickndx, unsigned envcount) {
-
   pid_t pid;
-  char * dummy[] = { NULL };
-  char **pi;
-  char *pd;
   int fds[2];
   FILE *file;
+  ptrdiff_t *s;
+  size_t n;
 
-  char** const pindex = (char**)shm;
-  char* const pdata = (char*)(pindex + envcount + 1);
-
-  if (envcount) {
-
-    /* load index array */
-    pi = pindex;
-    pd = pdata;
-    *pi = pd;
-    ++pi;
-    while (*pi) {
-      pd += strlen(pd) + 1; // TODO: Encode in pindex instead of using strlen
-      *pi = pd;
-      ++pi;
-    }
-    pi = pindex;
-    while (*pi) {
-      printf("env = %s\n", *pi);
-      pi++;
-    }
-  }
-
-  pipe(fds);
+  if (pipe(fds) < 0) {
+    // log + return
+  };
   if ((pid = fork()) < 0)
     die("fork() failed:");
   if (pid == 0) {
-    if (envcount > 0) {
-      for (pi = pindex; *pi; pi++) {
-        putenv(*pi);
-      }
+    if (envcount) {
+      s = (ptrdiff_t*)shm;
+      do {
+        putenv(shm + *s);
+        s++;
+      } while (*s);
     }
-    close(fds[0]); // child doesn't read
-    dup2(fds[1], 1); // redirect child's stdout to write-end of pipe
-    execvp("sh", (const char*[]){ "sh", "-c", bricks[brickndx].command, NULL });
-    die("execvp() failed:");
+    if (close(fds[0]) < 0) { /* child doesn't read */
+      // log + die
+    }
+    // TODO: Print to stdout for nice terminal output maybe
+    if (dup2(fds[1], 1) < 0) { /* redirect child's stdout to write-end of pipe */
+      // log + die
+    }
+    if (close(fds[1]) < 0) { // do I need this? is this correct
+      // log + die
+    }
+    if (execvp("sh", (char* const[]){ "sh", "-c", bricks[brickndx].command, NULL }) < 0) {
+      // log + die
+    }
   } else {
-    close(fds[1]); // parent doesn't write
-    file = fdopen(fds[0], "r");
-    fgets(cmdoutbuf[brickndx], OUTBUFSIZE, file);
-    close(file);
+    if (close(fds[1]) < 0) { /* parent doesn't write */
+      // log + return
+    }
+    if ((file = fdopen(fds[0], "r")) == NULL) {
+      // log + return
+    }
+    // TODO: Check whether non-printable characters cause trouble
+    //       Must check how dwm deals with newlines etc and whether
+    //       my scheme of char index gets messed up.
+    //       If all is well, let the buffer store newlines etc.
+    //       Until then, read until newline/EOF and remove trailing \n.
+    //       Also, why the heck does fgets not return a new ptr?
+    if (fgets(cmdoutbuf[brickndx], OUTBUFSIZE, file) == NULL &&
+        0 != ferror(file)) {
+      // log + return
+    }
+    n = strlen(cmdoutbuf[brickndx]);
+    if (cmdoutbuf[brickndx][n] == '\n')
+      cmdoutbuf[brickndx][n] = '\0';
+
+    if (fclose(file)) {
+      // log + return
+    }
   }
 }
 
@@ -370,15 +378,14 @@ main(int argc, char** argv) {
         die("shmat() failed:");
 
       /* paste envvar strings into shmem */
-      char **pindex = (char**)shm;
-      const char *databegin = (char*)(pindex + envcount + 1);
-      char* pdata = databegin;
+      char *p = (char*)((ptrdiff_t*)shm + envcount + 1);
+      ptrdiff_t *s = (ptrdiff_t*)shm;
       for (int ii = 0; ii < envcount; ++ii) {
-        pdata += sprintf(pdata, "%s", argv[4+ii*2]) + 1;
-        *pindex = databegin - pdata; // store offset (address useless for shmem)
-        pindex++;
+        *s = p - shm;
+        p = stpcpy(p, argv[4 + ii*2]) + 1;
+        s++;
       }
-      *((char**)shm + envcount) = (char*)NULL;
+      *s = 0;
     }
 
     unsigned ndx;
@@ -506,3 +513,8 @@ main(int argc, char** argv) {
 // TOOD(fix): cli allows missing -e
 //   e.g. dwmbricks -t dummy2 -e X=14 LEET=1337
 // TODO: Implement proper logging for daemon instead of die() everywhere
+//   fprintf(stderr, ..) should be enough
+//
+// TODO: status text is printed twice
+//   sleep(1) is interrupted by interrupt. use nanosleep and remaining
+//   time eventually.
