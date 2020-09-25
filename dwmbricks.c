@@ -1,4 +1,3 @@
-#define _GNU_SOURCE
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -336,6 +335,7 @@ utf8decodebyte(const char c, size_t *i)
 int
 main(int argc, char** argv) {
   key_t key;
+  int ii;
 
   /* Runtime init */
   flushstatus = toxroot;
@@ -368,8 +368,18 @@ main(int argc, char** argv) {
       die("Invalid arguments.");
     break;
   default: { /* cli */
-    if ((envcount = (argc - 3) / 2) > 0) {
-      /* shmem */
+    if (argc >= 3) {
+      /* ensure trailing args are pairs of `-e <STRING>` */
+      ii = 3;
+      while (ii < argc) {
+        if (argc <= ii+1 || strcmp(argv[ii], "-e"))
+          die("Invalid arguments.");
+        if (!strchr(argv[ii+1], '='))
+          die("Invalid arguments: Envvar string is not of the form 'name=value'.");
+        ii+=2;
+      }
+
+      /* shmem init */
       if ((key = ftok(pidfile, 1)) < 0)
         die("ftok() failed:");
       if ((shmid = shmget(key, shmsz, 0)) < 0)
@@ -380,7 +390,7 @@ main(int argc, char** argv) {
       /* paste envvar strings into shmem */
       char *p = (char*)((ptrdiff_t*)shm + envcount + 1);
       ptrdiff_t *s = (ptrdiff_t*)shm;
-      for (int ii = 0; ii < envcount; ++ii) {
+      for (ii = 0; ii < envcount; ++ii) {
         *s = p - shm;
         p = stpcpy(p, argv[4 + ii*2]) + 1;
         s++;
@@ -490,28 +500,14 @@ main(int argc, char** argv) {
   }
 }
 
-// TODO(feat): Improve cli args handling
-//   daemon arguments are not separated from cli arguments and nonsense like
-//   $0 -f -t keymap is possible
 // TODO(feat): Semver
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
 // TODO(feat): Makefile best practices
 // TODO(future): Replace -m cli parameter with generic passing-on of envvars
-//   E.g. $0 -t "keymap" -e "BUTTON=3" -e "FLAG=FOO" ..
-//   This requires an additional communication channel between the cli and daemon
-//   to pass the environment strings through.
-//   Idea: Shared memory segment (single writer (cli)/single reader (daemon)).
-//         -e adds a flag to the signal's payload indicating that the shared
-//         memory segment shall be parsed for envvars.
-//         - Lock smem
-//         - Store old envval
-//         - load new envval from smem
-//         - Unlock smem
-//         - execbrick
-//         - restore old envval
-// TOOD(fix): cli allows missing -e
-//   e.g. dwmbricks -t dummy2 -e X=14 LEET=1337
+//  [x] Basic proof of concept
+//  [ ] Implement locks for concurrent calls of cli
+//
 // TODO: Implement proper logging for daemon instead of die() everywhere
 //   fprintf(stderr, ..) should be enough
 //
