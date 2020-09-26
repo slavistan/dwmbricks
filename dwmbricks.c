@@ -19,6 +19,9 @@ typedef struct {
 
 /* Macros */
 #define LENGTH(X) (sizeof(X) / sizeof (X[0]))
+#define LOG(tag, msg) (fprintf(stderr, "[" tag "@%s:%d]: " msg, __FILE__, __LINE__))
+#define LOGWARN(msg) (LOG("warn", msg))
+#define LOGERR(msg) (LOG("error", msg))
 
 /* Shmem */
 static const int shmsz = 4096; /* size of shmem segment in bytes */
@@ -48,7 +51,6 @@ static char cmdoutbuf[LENGTH(bricks)][OUTBUFSIZE + 1] = {0}; /* per-brick stdout
 static char stext[LENGTH(bricks) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0}; /* status text buffer */
 static void (*flushstatus) () = toxroot; /* dispatcher */
 static unsigned delimlen; /* number of utf8 chars in delim */
-static char logfile[32];
 static char pidfile[32]; /* path to file containing pid */
 static sigset_t usrsigset; /* sigset for masking interrupts */
 static char *shm; /* shmem pointer */
@@ -68,7 +70,8 @@ brickexec(unsigned brickndx, unsigned envcount) {
   size_t n;
 
   if (pipe(fds) < 0) {
-    // log + return
+    LOGWARN("pipe() failed\n");
+    return;
   };
   if ((pid = fork()) < 0)
     die("fork() failed:");
@@ -81,24 +84,29 @@ brickexec(unsigned brickndx, unsigned envcount) {
       } while (*s);
     }
     if (close(fds[0]) < 0) { /* child doesn't read */
-      // log + die
+      LOGERR("close() failed\n");
+      die("close() failed");
     }
-    // TODO: Print to stdout for nice terminal output maybe
+    // TODO: Print brick's cmd to stdout for nice terminal output maybe
     if (dup2(fds[1], 1) < 0) { /* redirect child's stdout to write-end of pipe */
-      // log + die
+      LOGERR("dup2() failed\n");
+      die("dup2() failed");
     }
     if (close(fds[1]) < 0) { // do I need this? is this correct
-      // log + die
+      LOGERR("close() failed\n");
+      die("close() failed");
     }
     if (execvp("sh", (char* const[]){ "sh", "-c", bricks[brickndx].command, NULL }) < 0) {
-      // log + die
+      LOGERR("execvp() failed\n");
+      die("execvp() failed");
     }
   } else {
     if (close(fds[1]) < 0) { /* parent doesn't write */
-      // log + return
+      LOGWARN("close() failed\n");
+      return;
     }
     if ((file = fdopen(fds[0], "r")) == NULL) {
-      // log + return
+      LOGWARN("fdopen() failed\n");
     }
     // TODO: Check whether non-printable characters cause trouble
     //       Must check how dwm deals with newlines etc and whether
@@ -108,14 +116,14 @@ brickexec(unsigned brickndx, unsigned envcount) {
     //       Also, why the heck does fgets not return a new ptr?
     if (fgets(cmdoutbuf[brickndx], OUTBUFSIZE, file) == NULL &&
         0 != ferror(file)) {
-      // log + return
+      LOGWARN("fgets() failed\n");
     }
     n = strlen(cmdoutbuf[brickndx]);
     if (cmdoutbuf[brickndx][n] == '\n')
       cmdoutbuf[brickndx][n] = '\0';
 
     if (fclose(file)) {
-      // log + return
+      LOGWARN("fclose() failed\n");
     }
   }
 }
@@ -336,10 +344,10 @@ int
 main(int argc, char** argv) {
   key_t key;
   int ii;
+  pid_t pid;
 
   /* Runtime init */
   flushstatus = toxroot;
-  sprintf(logfile, "/tmp/dwmbricks-log-%d", getuid()); // TODO: ensure maxlen (snprintf)
   sprintf(pidfile, "/tmp/dwmbricks-pid-%d", getuid()); // TODO: see above
   sigemptyset(&usrsigset);
   sigaddset(&usrsigset, SIGUSR1);
@@ -430,7 +438,6 @@ main(int argc, char** argv) {
   }
 
   /* Fork and wait for daemon startup to finish */
-  pid_t pid;
   if (dofork) {
     if ((pid = fork()) < 0)
       die("fork() failed:");
@@ -473,12 +480,12 @@ main(int argc, char** argv) {
   sa.sa_sigaction = usr1;
   sigaction(SIGUSR1, &sa, NULL);
 
-  /* Signal to parent that daemon (child) is ready */
+  /* Signal parent that daemon (child) is ready */
   if (dofork)
     kill(getppid(), SIGQUIT);
 
   /* Superloop */
-  unsigned long timesec = 0; 
+  unsigned long timesec = 0;
   int update = 1;
   while (1) {
     if (update) {
@@ -509,7 +516,7 @@ main(int argc, char** argv) {
 //  [ ] Implement locks for concurrent calls of cli
 //
 // TODO: Implement proper logging for daemon instead of die() everywhere
-//   fprintf(stderr, ..) should be enough
+//   [ ] Combine die and LOGERR
 //
 // TODO: status text is printed twice
 //   sleep(1) is interrupted by interrupt. use nanosleep and remaining
