@@ -22,6 +22,7 @@ typedef struct {
 #define LOG(tag, msg) (fprintf(stderr, "[" tag "@%s:%d]: " msg, __FILE__, __LINE__))
 #define LOGWARN(msg) (LOG("warn", msg))
 #define LOGERR(msg) (LOG("error", msg))
+#define LOGDIE(msg) LOGERR(msg); die(msg);
 
 /* Shmem */
 static const int shmsz = 4096; /* size of shmem segment in bytes */
@@ -439,8 +440,10 @@ main(int argc, char** argv) {
 
   /* Fork and wait for daemon startup to finish */
   if (dofork) {
-    if ((pid = fork()) < 0)
+    if ((pid = fork()) < 0) {
+      LOGERR("fork() failed\n");
       die("fork() failed:");
+    }
     if (pid > 0) {
       storedaemonpid(pid);
       sigset_t parentsigset;
@@ -455,7 +458,7 @@ main(int argc, char** argv) {
 
   /* shmem setup (daemon reader, cli writer) */
   if ((key = ftok(pidfile, 1)) < 0)
-    die("ftok() failed:");
+    LOGDIE("ftok() failed:");
   if ((shmid = shmget(key, shmsz, IPC_CREAT | IPC_EXCL | 0600)) < 0)
     die("shmget() failed:");
   if ((shm = (char*)shmat(shmid, NULL, 0)) == (char*)-1)
