@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <sys/wait.h>
 #include <limits.h>
 #include <unistd.h>
 #include <X11/Xlib.h>
@@ -19,10 +20,6 @@ typedef struct {
 
 /* Macros */
 #define LENGTH(X) (sizeof(X) / sizeof (X[0]))
-#define LOG(tag, msg) (fprintf(stderr, "[" tag "@%s:%d]: " msg, __FILE__, __LINE__))
-#define LOGWARN(msg) (LOG("warn", msg))
-#define LOGERR(msg) (LOG("error", msg))
-#define LOGDIE(msg) LOGERR(msg); die(msg);
 
 /* Shmem */
 static const int shmsz = 4096; /* size of shmem segment in bytes */
@@ -39,6 +36,7 @@ static void cleanup(int);
 static void collectflush(void);
 static pid_t daemonpid(void);
 static void die(const char *fmt, ...);
+static void elog(const char *fmt, ...);
 static void sigbrick(unsigned, unsigned);
 static void sigchar(unsigned, unsigned);
 static void tostdout(void);
@@ -59,7 +57,6 @@ static int shmid = -1;
 
 /*
  * Run a brick's command and write its output to its personal buffer.
- * If 'mbutton' is set the envvar 'BUTTON' is introduced prior to execution.
  * Called exclusively by daemon.
  */
 void
@@ -71,7 +68,7 @@ brickexec(unsigned brickndx, unsigned envcount) {
   size_t n;
 
   if (pipe(fds) < 0) {
-    LOGWARN("pipe() failed\n");
+    elog("pipe() failed:");
     return;
   };
   if ((pid = fork()) < 0)
@@ -85,46 +82,41 @@ brickexec(unsigned brickndx, unsigned envcount) {
       } while (*s);
     }
     if (close(fds[0]) < 0) { /* child doesn't read */
-      LOGERR("close() failed\n");
-      die("close() failed");
+      die("close() failed:");
     }
-    // TODO: Print brick's cmd to stdout for nice terminal output maybe
     if (dup2(fds[1], 1) < 0) { /* redirect child's stdout to write-end of pipe */
-      LOGERR("dup2() failed\n");
-      die("dup2() failed");
+      die("dup2() failed:");
     }
     if (close(fds[1]) < 0) { // do I need this? is this correct
-      LOGERR("close() failed\n");
-      die("close() failed");
+      die("close() failed:");
     }
     if (execvp("sh", (char* const[]){ "sh", "-c", bricks[brickndx].command, NULL }) < 0) {
-      LOGERR("execvp() failed\n");
-      die("execvp() failed");
+      die("execvp() failed:");
     }
   } else {
     if (close(fds[1]) < 0) { /* parent doesn't write */
-      LOGWARN("close() failed\n");
+      elog("close() failed:");
       return;
     }
     if ((file = fdopen(fds[0], "r")) == NULL) {
-      LOGWARN("fdopen() failed\n");
+      elog("fdopen() failed:");
     }
-    // TODO: Check whether non-printable characters cause trouble
-    //       Must check how dwm deals with newlines etc and whether
-    //       my scheme of char index gets messed up.
-    //       If all is well, let the buffer store newlines etc.
-    //       Until then, read until newline/EOF and remove trailing \n.
-    //       Also, why the heck does fgets not return a new ptr?
+    /* TODO: Implement timeout mechanism for shell commands.
+     *   As it currently stands fgets() will indefinitely block the daemon
+     *   until at least one line is read of EOF is returned.
+     *   See sigtimedwait().
+     */
+    waitpid(pid, NULL, 0); /* wait until termination of child */
     if (fgets(cmdoutbuf[brickndx], OUTBUFSIZE, file) == NULL &&
         0 != ferror(file)) {
-      LOGWARN("fgets() failed\n");
+      elog("fgets() failed:");
     }
     n = strlen(cmdoutbuf[brickndx]);
     if (cmdoutbuf[brickndx][n] == '\n')
       cmdoutbuf[brickndx][n] = '\0';
 
     if (fclose(file)) {
-      LOGWARN("fclose() failed\n");
+      elog("fclose() failed:");
     }
   }
 }
@@ -210,11 +202,8 @@ daemonpid(void) {
   return pid;
 }
 
-/*
- * Print error and shut down.
- */
 void
-die(const char *fmt, ...) {
+elog(const char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   vfprintf(stderr, fmt, ap);
@@ -225,6 +214,16 @@ die(const char *fmt, ...) {
   } else {
     fputc('\n', stderr);
   }
+  exit(1);
+}
+
+/*
+ * Print error and shut down.
+ */
+void
+die(const char *fmt, ...) {
+  elog(fmt);
+  cleanup(0);
   exit(1);
 }
 
@@ -441,7 +440,6 @@ main(int argc, char** argv) {
   /* Fork and wait for daemon startup to finish */
   if (dofork) {
     if ((pid = fork()) < 0) {
-      LOGERR("fork() failed\n");
       die("fork() failed:");
     }
     if (pid > 0) {
@@ -458,7 +456,7 @@ main(int argc, char** argv) {
 
   /* shmem setup (daemon reader, cli writer) */
   if ((key = ftok(pidfile, 1)) < 0)
-    LOGDIE("ftok() failed:");
+    die("ftok() failed:");
   if ((shmid = shmget(key, shmsz, IPC_CREAT | IPC_EXCL | 0600)) < 0)
     die("shmget() failed:");
   if ((shm = (char*)shmat(shmid, NULL, 0)) == (char*)-1)
@@ -518,9 +516,15 @@ main(int argc, char** argv) {
 //  [x] Basic proof of concept
 //  [ ] Implement locks for concurrent calls of cli
 //
-// TODO: Implement proper logging for daemon instead of die() everywhere
-//   [ ] Combine die and LOGERR
-//
 // TODO: status text is printed twice
 //   sleep(1) is interrupted by interrupt. use nanosleep and remaining
 //   time eventually.
+//
+// TODO: Check whether non-printable characters cause trouble
+//       Must check how dwm deals with newlines etc and whether
+//       my scheme of char index gets messed up.
+//       If all is well, let the buffer store newlines etc.
+//       Until then, read until newline/EOF and remove trailing \n.
+//       Also, why the heck does fgets not return a new ptr?
+//
+// TODO(feat): Copy brick's cmd output to cli's stdout
