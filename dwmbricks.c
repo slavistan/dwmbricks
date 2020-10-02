@@ -5,7 +5,10 @@
 #include <signal.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <unistd.h>
 #include <X11/Xlib.h>
@@ -51,6 +54,7 @@ static char stext[LENGTH(bricks) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0}; /* s
 static void (*flushstatus) () = toxroot; /* dispatcher */
 static unsigned delimlen; /* number of utf8 chars in delim */
 static char pidfile[32]; /* path to file containing pid */
+static char clilockfile[32]; /* path to cli lock file */
 static sigset_t usrsigset; /* sigset for masking interrupts */
 static char *shm; /* shmem pointer */
 static int shmid = -1;
@@ -349,6 +353,7 @@ main(int argc, char** argv) {
   /* Runtime init */
   flushstatus = toxroot;
   sprintf(pidfile, "/tmp/dwmbricks-pid-%d", getuid()); // TODO: see above
+  sprintf(clilockfile, "/tmp/dwmbricks-clilock-%d", getuid()); // TODO: see above
   sigemptyset(&usrsigset);
   sigaddset(&usrsigset, SIGUSR1);
   sigaddset(&usrsigset, SIGUSR2);
@@ -377,14 +382,25 @@ main(int argc, char** argv) {
     break;
   default: { /* cli */
     if (argc >= 3) {
-      /* ensure trailing args are pairs of `-e <STRING>` */
+      /* ensure trailing args are pairs of `-e NAME=VALUE` */
       ii = 3;
       while (ii < argc) {
         if (argc <= ii+1 || strcmp(argv[ii], "-e"))
           die("Invalid arguments.");
         if (!strchr(argv[ii+1], '='))
-          die("Invalid arguments: Envvar string is not of the form 'name=value'.");
+          die("Invalid arguments: Envvar string is not of the form 'NAME=VALUE'.");
         ii+=2;
+      }
+
+      /* lock to prevent multiple instances of cli running in parallel */
+      ii = 0;
+      while (open(clilockfile, O_CREAT|O_EXCL, O_RDWR) == -1) {
+        sleep(1);
+        if (ii >= 3) {
+          elog("Timed out. Try again later.");
+          return 1;
+        }
+        ++ii;
       }
 
       /* shmem init */
@@ -412,7 +428,7 @@ main(int argc, char** argv) {
       ndx = strtoul(argv[2], NULL, 10);
       sigchar(ndx, envcount);
     } else if (!strcmp(argv[1], "-t")) {
-      for (int ii = 0; ii < LENGTH(bricks); ii++) {
+      for (ii = 0; ii < LENGTH(bricks); ii++) {
         if (!strcmp(argv[2], bricks[ii].tag)) {
           sigbrick(ii, envcount);
         }
@@ -420,8 +436,11 @@ main(int argc, char** argv) {
     } else if (!strcmp(argv[1], "-b")) {
       ndx = strtoul(argv[2], NULL, 10);
       sigbrick(ndx, envcount);
-    } else
-      die("Invalid arguments.");
+    } else {
+      elog("Invalid arguments.");
+    }
+
+    remove(clilockfile);
     return 0;
     break;
   }
@@ -464,7 +483,7 @@ main(int argc, char** argv) {
     die("shmat() failed:");
 
   /* Run all commands once */
-  for(int ii = 0; ii < LENGTH(bricks); ii++)
+  for(ii = 0; ii < LENGTH(bricks); ii++)
     brickexec(ii, 0);
   collectflush();
 
@@ -497,7 +516,7 @@ main(int argc, char** argv) {
       update = 0;
     }
     sleep(1);
-    for(int ii = 0; ii < LENGTH(bricks); ii++) {
+    for(ii = 0; ii < LENGTH(bricks); ii++) {
       if (bricks[ii].interval > 0 && (timesec % bricks[ii].interval == 0)) {
         sigprocmask(SIG_BLOCK, &usrsigset, NULL);
         brickexec(ii, 0);
@@ -513,9 +532,6 @@ main(int argc, char** argv) {
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
 // TODO(feat): Makefile best practices
-// TODO(future): Replace -m cli parameter with generic passing-on of envvars
-//  [x] Basic proof of concept
-//  [ ] Implement locks for concurrent calls of cli
 //
 // TODO: status text is printed twice
 //   sleep(1) is interrupted by interrupt. use nanosleep and remaining
@@ -529,3 +545,5 @@ main(int argc, char** argv) {
 //       Also, why the heck does fgets not return a new ptr?
 //
 // TODO(feat): Copy brick's cmd output to cli's stdout
+// TODO(feat): Detect offline daemon when running cli
+// TODO(fix): Implement cleanup for cli and daemon. die() is too generic.
