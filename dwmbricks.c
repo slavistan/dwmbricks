@@ -539,7 +539,9 @@ main(int argc, char** argv) {
 // TODO(feat): Semver
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
-// TODO(feat): Makefile best practices
+//   - [ ] Usage -h | --help
+//   - [ ] Manpage
+//   - [ ] Adjust Makefile
 //
 // TODO: Check whether non-printable characters cause trouble
 //       Must check how dwm deals with newlines etc and whether

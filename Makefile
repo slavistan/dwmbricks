@@ -3,17 +3,15 @@
 PREFIX = /usr/local
 CC = gcc
 
-dwmbricks: dwmbricks.o
-	$(CC) dwmbricks.o -lX11 -o dwmbricks
-dwmbricks.o:
-	$(CC) -g -Og -c dwmbricks.c
+all: dwmbricks.c config.h Makefile
+	$(CC) dwmbricks.c -O2 -lX11 -o dwmbricks
 clean:
-	rm -f *.o *.gch dwmbricks
+	rm -f *.o dwmbricks
 install: dwmbricks
-	mkdir -p $(DESTDIR)$(PREFIX)/bin
-	cp -f dwmbricks $(DESTDIR)$(PREFIX)/bin
-	chmod 755 $(DESTDIR)$(PREFIX)/bin/dwmbricks
+	mkdir -p $(PREFIX)/bin
+	cp -f dwmbricks $(PREFIX)/bin
+	chmod 755 $(PREFIX)/bin/dwmbricks
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/dwmbricks
+	rm -f $(PREFIX)/bin/dwmbricks
 
-.PHONY: dwmbricks.o clean install uninstall
+.PHONY: clean uninstall
