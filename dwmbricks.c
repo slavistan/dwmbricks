@@ -396,6 +396,7 @@ main(int argc, char** argv) {
         die("shmat() failed:");
 
       /* paste envvar strings into shmem */
+      envcount = (argc - 3) / 2;
       char *p = (char*)((ptrdiff_t*)shm + envcount + 1);
       ptrdiff_t *s = (ptrdiff_t*)shm;
       for (ii = 0; ii < envcount; ++ii) {
