@@ -4,12 +4,14 @@
 #include <string.h>
 #include <signal.h>
 #include <sys/ipc.h>
+#include <errno.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <time.h>
 #include <unistd.h>
 #include <X11/Xlib.h>
 
@@ -508,14 +510,20 @@ main(int argc, char** argv) {
   /* Superloop */
   unsigned long timesec = 0;
   int update = 1;
+  struct timespec dur;
   while (1) {
+    dur.tv_sec = 1;
+    dur.tv_nsec = 0;
     if (update) {
       sigprocmask(SIG_BLOCK, &usrsigset, NULL);
       collectflush();
       sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
       update = 0;
     }
-    sleep(1);
+    while (nanosleep(&dur, &dur) == -1) {
+      if (errno != EINTR)
+        die("nanosleep() failed:");
+    }
     for(ii = 0; ii < LENGTH(bricks); ii++) {
       if (bricks[ii].interval > 0 && (timesec % bricks[ii].interval == 0)) {
         sigprocmask(SIG_BLOCK, &usrsigset, NULL);
@@ -532,10 +540,6 @@ main(int argc, char** argv) {
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
 // TODO(feat): Makefile best practices
-//
-// TODO: status text is printed twice
-//   sleep(1) is interrupted by interrupt. use nanosleep and remaining
-//   time eventually.
 //
 // TODO: Check whether non-printable characters cause trouble
 //       Must check how dwm deals with newlines etc and whether
