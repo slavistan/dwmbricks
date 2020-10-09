@@ -62,8 +62,9 @@ static char *shm; /* shmem pointer */
 static int shmid = -1;
 
 /*
- * Run a brick's command and write its output to its personal buffer.
- * Called exclusively by daemon.
+ * Run a brick's command and write its output to its personal buffer. Only the
+ * output's first line is kept. Trailing newlines are removed. Called exclusively
+ * by daemon.
  */
 void
 brickexec(unsigned brickndx, unsigned envcount) {
@@ -162,7 +163,7 @@ brickfromchar(unsigned charndx) {
 }
 
 /*
- * Remove PID-file. Called exclusively by daemon.
+ * Cleanup resources. Called exclusively by daemon.
  */
 void
 cleanup(int exitafter) {
@@ -197,17 +198,21 @@ collectflush(void) {
  */
 pid_t
 daemonpid(void) {
-  static char buf[16];
-  FILE* file = fopen(pidfile, "r");
-  if (!file)
-    die("Cannot open PID-file\n");
-  if (!fgets(buf, 16, file))
-    die("Cannot read from PID-file\n");
+  char buf[16];
+  FILE* file;
+  pid_t pid;
+
+  if (!(file = fopen(pidfile, "r")))
+    die("Cannot open PID-file:");
+  if (!fgets(buf, sizeof(buf), file))
+    die("Cannot read from PID-file:");
   fclose(file);
-  pid_t pid = (pid_t)strtoul(buf, NULL, 10);
-  return pid;
+  return (pid_t)strtoul(buf, NULL, 10);
 }
 
+/*
+ * Log error
+ */
 void
 elog(const char *fmt, ...) {
   va_list ap;
@@ -224,7 +229,7 @@ elog(const char *fmt, ...) {
 }
 
 /*
- * Print error and shut down.
+ * Log error and shut down.
  */
 void
 die(const char *fmt, ...) {
@@ -522,7 +527,7 @@ main(int argc, char** argv) {
     }
     while (nanosleep(&dur, &dur) == -1) {
       if (errno != EINTR)
-        die("nanosleep() failed:");
+        elog("nanosleep() failed:");
     }
     for(ii = 0; ii < LENGTH(bricks); ii++) {
       if (bricks[ii].interval > 0 && (timesec % bricks[ii].interval == 0)) {
@@ -536,6 +541,7 @@ main(int argc, char** argv) {
   }
 }
 
+// TODO: Long-term testing
 // TODO(feat): Semver
 // TODO(feat): README.md
 // TODO(feat): Usage / manpage
@@ -543,13 +549,8 @@ main(int argc, char** argv) {
 //   - [ ] Manpage
 //   - [ ] Adjust Makefile
 //
-// TODO: Check whether non-printable characters cause trouble
-//       Must check how dwm deals with newlines etc and whether
-//       my scheme of char index gets messed up.
-//       If all is well, let the buffer store newlines etc.
-//       Until then, read until newline/EOF and remove trailing \n.
-//       Also, why the heck does fgets not return a new ptr?
-//
 // TODO(feat): Copy brick's cmd output to cli's stdout
 // TODO(feat): Detect offline daemon when running cli
 // TODO(fix): Implement cleanup for cli and daemon. die() is too generic.
+//   It's probably time to refactor into a daemon and cli binary. This single
+//   source is getting very messy.
