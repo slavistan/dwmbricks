@@ -5,9 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static long utf8decodebyte(const char c, size_t *i);
-
-#define UTF_SIZ 4
 static const unsigned char utfbyte[UTF_SIZ + 1] = {0x80,    0, 0xC0, 0xE0, 0xF0};
 static const unsigned char utfmask[UTF_SIZ + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
 
