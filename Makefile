@@ -3,6 +3,7 @@
 PREFIX = /usr/local
 CC = gcc
 
+all: daemon cli
 utils: utils.c utils.h
 	$(CC) -O2 -c -o utils.o utils.c
 cli: cli.c utils

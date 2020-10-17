@@ -149,6 +149,7 @@ cleanup(int exitafter) {
       shmdt(shm);
     shmctl(shmid, IPC_RMID, NULL);
   }
+
   if (exitafter)
     exit(0);
 }
@@ -215,6 +216,7 @@ main(int argc, char** argv) {
     exit(1);
   }
   fprintf(pidfile, "%u\n", getpid());
+  fflush(pidfile);
 
   /* shmem init */
   if ((key = ftok(pidfilepath, 1)) < 0) {
@@ -279,3 +281,18 @@ main(int argc, char** argv) {
 
   return 0;
 }
+
+
+// TODO: Long-term testing
+// TODO(feat): Semver
+// TODO(feat): README.md
+// TODO(feat): Usage / manpage
+//   - [ ] Usage -h | --help
+//   - [ ] Manpage
+//   - [ ] Adjust Makefile
+//
+// TODO(feat): Copy brick's cmd output to cli's stdout
+// TODO(feat): Detect offline daemon when running cli
+// TODO(feat): Allow to start daemon from cli
+// TODO(feat): Find a new name
+//   How about 'stacatto' = status + cat?
