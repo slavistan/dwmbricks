@@ -112,6 +112,7 @@ brickexec(unsigned brickndx, unsigned envcount) {
      *   As it currently stands fgets() will indefinitely block the daemon
      *   until at least one line is read of EOF is returned.
      *   See sigtimedwait().
+     *   Prefix brick output of a timed-out command with [T/O]
      */
     waitpid(pid, NULL, 0); /* wait until termination of child */
     if (fgets(cmdoutbuf[brickndx], OUTBUFSIZE, file) == NULL &&
@@ -367,8 +368,10 @@ main(int argc, char** argv) {
   size_t charsize;
   for (const char *ptr = delim; *ptr != '\0'; ptr+=charsize) {
     utf8decodebyte(*ptr, &charsize);
-    if (charsize > UTF_SIZ || charsize == 0)
-      die("Delimiter contains invalid UTF-8.");
+    if (charsize > UTF_SIZ || charsize == 0) {
+      elog("Delimiter contains invalid UTF-8.");
+      exit(1);
+    }
     delimlen++;
   }
 
@@ -554,3 +557,6 @@ main(int argc, char** argv) {
 // TODO(fix): Implement cleanup for cli and daemon. die() is too generic.
 //   It's probably time to refactor into a daemon and cli binary. This single
 //   source is getting very messy.
+// TODO(feat): Let this be a single-line status generator
+//   There's no need to determine where and how the text is displayed. This
+//   is really none of my business.
