@@ -15,7 +15,7 @@
 #include "config.h"
 
 static void instrexec(unsigned, unsigned);
-static size_t instrfromchar(unsigned);
+static ssize_t instrfromchar(unsigned);
 static void cleanup(int);
 static void collectflush(void);
 
@@ -105,13 +105,13 @@ instrexec(unsigned instrndx, unsigned envcount) {
 /*
  * Retrieve instruction index from UTF-8 character index in status string.
  *
- * Returns -1: charndx belongs to a delimiter
- *         -2: status text contains invalid UTF-8
- *         -3: charndx is out of range
+ * Returns -1 iff charndx belongs to a delimiter
+ *         -2 iff status text contains invalid UTF-8
+ *         -3 iff charndx is out of range
  */
-size_t
+ssize_t
 instrfromchar(unsigned charndx) {
-  size_t charcount, charsize, delimcount;
+  ssize_t charcount, charsz, delimcount;
   char *ptr;
 
   delimcount = charcount = 0;
@@ -126,10 +126,9 @@ instrfromchar(unsigned charndx) {
     } else {
       if (charcount >= charndx)
         return delimcount;
-      utf8decodebyte(*ptr, &charsize); // TODO: exchange with utf8strlen
-      if (charsize == 0 || charsize > UTF_SIZ)
+      if ((charsz = utf8charsz(*ptr)) == -1)
         return -2; /* invalid UTF-8 */
-      ptr += charsize;
+      ptr += charsz;
       charcount++;
     }
   }
@@ -182,7 +181,7 @@ usr2(int sig, siginfo_t *si, void *ucontext)
   const unsigned sigdata = *(unsigned*)(&si->si_value.sival_int);
   const unsigned envcount = sigdata >> (sizeof(unsigned) * CHAR_BIT - 3);
   const unsigned charndx = ((sigdata << 3) >> 3);
-  const int instrndx = instrfromchar(charndx);
+  const ssize_t instrndx = instrfromchar(charndx);
   if (instrndx >= 0) {
     instrexec(instrndx, envcount);
     collectflush();
@@ -293,4 +292,3 @@ main(int argc, char** argv) {
 //
 // TODO(feat): Copy instr's cmd output to cli's stdout
 // TODO(feat): Detect offline daemon when running cli
-// TODO(feat): Allow to start daemon from cli

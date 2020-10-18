@@ -16,12 +16,12 @@
 
 static char *shm; /* shmem pointer */
 static int shmid = -1; /* shm segment id; -1 = uninitialized */
+static pid_t daemonpid; /* Daemon's PID */
 static char pidfilepath[PIDFILEPATH_MAXLEN];
 static char lockfilepath[LOCKFILEPATH_MAXLEN]; /* path to cli lock file */
 static int lockfilefd;
 
 static void cleanup(int);
-pid_t daemonpid(void);
 static void siginstr(unsigned, unsigned);
 static void sigchar(unsigned, unsigned);
 
@@ -37,38 +37,13 @@ cleanup(int exitafter) {
     exit(0);
 }
 
-/*
- * Retrieve the running daemon's pid from pid-file.
- * TODO: Retrieve pid once and store in global. Remove this function.
- */
-pid_t
-daemonpid(void) {
-  char buf[16];
-  FILE* file;
-  pid_t pid;
-
-  if (!(file = fopen(pidfilepath, "r"))) {
-    elog("Cannot open PID-file:");
-    exit(1);
-  }
-  if (!fgets(buf, sizeof(buf), file)) {
-    elog("Cannot read from PID-file:");
-    exit(1);
-  }
-  if (fclose(file)) {
-    elog("Cannot fclose() PID-file '%s':");
-    exit(1);
-  }
-  return (pid_t)strtoul(buf, NULL, 10);
-}
-
 void
 siginstr(unsigned instrndx, unsigned envcount)
 {
   union sigval sv = { .sival_int = 0 };
   unsigned *pdata = &sv.sival_int;
   *pdata = (envcount << (sizeof(unsigned) * CHAR_BIT - 3)) | instrndx;
-  sigqueue(daemonpid(), SIGUSR1, sv);
+  sigqueue(daemonpid, SIGUSR1, sv);
 }
 
 /*
@@ -83,7 +58,7 @@ sigchar(unsigned charndx, unsigned envcount)
   union sigval sv = { .sival_int = 0 };
   unsigned *pdata = &sv.sival_int;
   *pdata = (envcount << (sizeof(unsigned) * CHAR_BIT - 3)) | charndx;
-  sigqueue(daemonpid(), SIGUSR2, sv);
+  sigqueue(daemonpid, SIGUSR2, sv);
 }
 
 int
@@ -92,14 +67,35 @@ main(int argc, char** argv) {
   unsigned envcount;
   int ii;
   key_t key;
+  char buf[16];
+  FILE* file;
 
   /* Runtime init */
   sprintf(lockfilepath, LOCKFILEPATH_TEMPLATE, getuid()); // TODO: error checking
   sprintf(pidfilepath, PIDFILEPATH_TEMPLATE, getuid()); // TODO: error checking
+  if (!(file = fopen(pidfilepath, "r"))) {
+    elog("Cannot open PID-file:");
+    exit(1);
+  }
+  if (!fgets(buf, sizeof(buf), file)) { // TODO: proper error checking of fgets
+    elog("Cannot read from PID-file:");
+    exit(1);
+  }
+  if (fclose(file)) {
+    elog("Cannot fclose() PID-file '%s':");
+    exit(1);
+  }
+  daemonpid = (pid_t)strtoul(buf, NULL, 10);
 
   /* Sanity check */
   // TODO: Check if daemon is running
 
+
+  /* lock to concurrent shmem accesses */
+  // TODO: Wait for unlock-file-fd event instead of using sleep()
+  while ((lockfilefd = open(lockfilepath, O_CREAT|O_EXCL, O_RDWR)) == -1) {
+    sleep(1);
+  }
 
   /* Signal init */
   signal(SIGQUIT, cleanup);
@@ -108,6 +104,7 @@ main(int argc, char** argv) {
   signal(SIGSEGV, cleanup);
   signal(SIGHUP, cleanup);
 
+  /* Parse trailing envvar args */
   if (argc >= 3) {
     /* ensure trailing args are pairs of `-e NAME=VALUE` */
     ii = 3;
@@ -121,17 +118,6 @@ main(int argc, char** argv) {
         exit(1);
       }
       ii+=2;
-    }
-
-    /* lock to prevent multiple instances of cli running in parallel */
-    ii = 0;
-    while ((lockfilefd = open(lockfilepath, O_CREAT|O_EXCL, O_RDWR)) == -1) {
-      sleep(1);
-      if (ii >= 3) {
-        elog("Lockfile '%s' exists and process timed out.", lockfilepath);
-        return 1;
-      }
-      ++ii;
     }
 
     /* shmem init */
@@ -170,7 +156,7 @@ main(int argc, char** argv) {
         siginstr(ii, envcount);
       }
     }
-  } else if (!strcmp(argv[1], "-b")) {
+  } else if (!strcmp(argv[1], "-i")) {
     ndx = strtoul(argv[2], NULL, 10);
     siginstr(ndx, envcount);
   } else {

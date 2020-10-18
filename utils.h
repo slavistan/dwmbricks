@@ -2,6 +2,7 @@
  * This file contains code use by cli and daemon.
  */
 #include <stddef.h>
+#include <sys/types.h>
 
 typedef struct {
   char* command;
@@ -12,7 +13,6 @@ typedef struct {
 /* Macros */
 #define LENGTH(X) (sizeof(X) / sizeof (X[0]))
 
-#define UTF_SIZ 4
-size_t utf8strlen(const char *p);
-long utf8decodebyte(const char c, size_t *i);
+ssize_t utf8strlen(const char *p);
+ssize_t utf8charsz(char c);
 void elog(const char *fmt, ...);
