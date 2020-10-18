@@ -14,25 +14,25 @@
 #include "utils.h"
 #include "config.h"
 
-static void brickexec(unsigned, unsigned);
-static int brickfromchar(unsigned);
+static void instrexec(unsigned, unsigned);
+static size_t instrfromchar(unsigned);
 static void cleanup(int);
 static void collectflush(void);
 
 static void usr1(int, siginfo_t*, void*);
 static void usr2(int, siginfo_t*, void*);
 
-static char cmdoutbuf[LENGTH(bricks)][OUTBUFSIZE + 1] = {0}; /* per-brick stdout buffer */
+static char cmdoutbuf[LENGTH(instructions)][OUTBUFSIZE + 1] = {0}; /* per-instr stdout buffer */
 static unsigned delimlen; /* number of utf8 chars in delim */
 static char pidfilepath[PIDFILEPATH_MAXLEN];
 static FILE* pidfile;
 static char *shm; /* shmem pointer */
 static int shmid = -1; /* shm segment id; -1 = uninitialized */
-static char stext[LENGTH(bricks) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0}; /* status text buffer */
+static char stext[LENGTH(instructions) * (OUTBUFSIZE + 1 + sizeof(delim))] = {0}; /* status text buffer */
 static sigset_t usrsigset; /* sigset for masking interrupts */
 
 void
-brickexec(unsigned brickndx, unsigned envcount) {
+instrexec(unsigned instrndx, unsigned envcount) {
   pid_t pid;
   int fds[2];
   FILE *file;
@@ -56,18 +56,18 @@ brickexec(unsigned brickndx, unsigned envcount) {
       } while (*s);
     }
     if (close(fds[0]) < 0) { /* child doesn't read */
-      elog("close() failed:"); // TODO: Does fork use the same stderr parent?
+      elog("close() failed:");
       exit(1);
     }
     if (dup2(fds[1], 1) < 0) { /* redirect child's stdout to write-end of pipe */
       elog("dup2() failed:");
       exit(1);
     }
-    if (close(fds[1]) < 0) { // do I need this? is this correct
+    if (close(fds[1]) < 0) {
       elog("close() failed:");
       exit(1);
     }
-    if (execvp("sh", (char* const[]){ "sh", "-c", bricks[brickndx].command, NULL }) < 0) {
+    if (execvp("sh", (char* const[]){ "sh", "-c", instructions[instrndx].command, NULL }) < 0) {
       elog("execvp() failed:");
       exit(1);
     }
@@ -84,17 +84,17 @@ brickexec(unsigned brickndx, unsigned envcount) {
      *   As it currently stands fgets() will indefinitely block the daemon
      *   until at least one line is read of EOF is returned.
      *   See sigtimedwait().
-     *   Prefix brick output of a timed-out command with [T/O]
+     *   Prefix instr output of a timed-out command with [T/O]
      */
     waitpid(pid, NULL, 0); /* wait until termination of child */
-    if (fgets(cmdoutbuf[brickndx], OUTBUFSIZE, file) == NULL &&
+    if (fgets(cmdoutbuf[instrndx], OUTBUFSIZE, file) == NULL &&
         0 != ferror(file)) {
       elog("fgets() failed:");
       return;
     }
-    n = strlen(cmdoutbuf[brickndx]);
-    if (cmdoutbuf[brickndx][n] == '\n')
-      cmdoutbuf[brickndx][n] = '\0';
+    n = strlen(cmdoutbuf[instrndx]);
+    if (cmdoutbuf[instrndx][n] == '\n')
+      cmdoutbuf[instrndx][n] = '\0';
 
     if (fclose(file)) {
       elog("fclose() failed:");
@@ -103,14 +103,14 @@ brickexec(unsigned brickndx, unsigned envcount) {
 }
 
 /*
- * Retrieve brick index from UTF-8 character index in status string.
+ * Retrieve instruction index from UTF-8 character index in status string.
  *
  * Returns -1: charndx belongs to a delimiter
  *         -2: status text contains invalid UTF-8
  *         -3: charndx is out of range
  */
-int // TODO: use size_t
-brickfromchar(unsigned charndx) {
+size_t
+instrfromchar(unsigned charndx) {
   size_t charcount, charsize, delimcount;
   char *ptr;
 
@@ -159,7 +159,7 @@ collectflush(void) {
   char *p = stext;
 
   p = stpcpy(p, cmdoutbuf[0]);
-  for(int ii = 1; ii < LENGTH(bricks); ii++) {
+  for(int ii = 1; ii < LENGTH(instructions); ii++) {
     p = stpcpy(stpcpy(p, delim), cmdoutbuf[ii]);
   }
   puts(stext);
@@ -171,8 +171,8 @@ usr1(int sig, siginfo_t *si, void *ucontext)
 {
   const unsigned sigdata = *(unsigned*)(&si->si_value.sival_int);
   const unsigned envcount = sigdata >> (sizeof(unsigned) * CHAR_BIT - 3);
-  const unsigned brickndx = ((sigdata << 3) >> 3);
-  brickexec(brickndx, envcount);
+  const unsigned instrndx = ((sigdata << 3) >> 3);
+  instrexec(instrndx, envcount);
   collectflush();
 }
 
@@ -182,9 +182,9 @@ usr2(int sig, siginfo_t *si, void *ucontext)
   const unsigned sigdata = *(unsigned*)(&si->si_value.sival_int);
   const unsigned envcount = sigdata >> (sizeof(unsigned) * CHAR_BIT - 3);
   const unsigned charndx = ((sigdata << 3) >> 3);
-  const int brickndx = brickfromchar(charndx);
-  if (brickndx >= 0) {
-    brickexec(brickndx, envcount);
+  const int instrndx = instrfromchar(charndx);
+  if (instrndx >= 0) {
+    instrexec(instrndx, envcount);
     collectflush();
   }
 }
@@ -233,8 +233,8 @@ main(int argc, char** argv) {
   }
 
   /* Run all commands once */
-  for(int ii = 0; ii < LENGTH(bricks); ii++)
-    brickexec(ii, 0);
+  for(int ii = 0; ii < LENGTH(instructions); ii++)
+    instrexec(ii, 0);
   collectflush();
 
   /* Signal setup */
@@ -268,10 +268,10 @@ main(int argc, char** argv) {
       if (errno != EINTR)
         elog("nanosleep() failed:");
     }
-    for(int ii = 0; ii < LENGTH(bricks); ii++) {
-      if (bricks[ii].interval > 0 && (timesec % bricks[ii].interval == 0)) {
+    for(int ii = 0; ii < LENGTH(instructions); ii++) {
+      if (instructions[ii].interval > 0 && (timesec % instructions[ii].interval == 0)) {
         sigprocmask(SIG_BLOCK, &usrsigset, NULL);
-        brickexec(ii, 0);
+        instrexec(ii, 0);
         sigprocmask(SIG_UNBLOCK, &usrsigset, NULL);
         update = 1;
       }
@@ -291,8 +291,6 @@ main(int argc, char** argv) {
 //   - [ ] Manpage
 //   - [ ] Adjust Makefile
 //
-// TODO(feat): Copy brick's cmd output to cli's stdout
+// TODO(feat): Copy instr's cmd output to cli's stdout
 // TODO(feat): Detect offline daemon when running cli
 // TODO(feat): Allow to start daemon from cli
-// TODO(feat): Find a new name
-//   How about 'stacatto' = status + cat?

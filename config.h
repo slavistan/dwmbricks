@@ -1,8 +1,9 @@
-/* Maximum storage size of a command's output excl. null-delim */
-#define OUTBUFSIZE 32
+/**
+ * User configuration
+ */
 
-/* Bricks declaration */
-const Brick bricks[] = {
+/* Persistent instructions */
+const Instruction instructions[] = {
   /* Command          , Update Interval , Tag */
   {"status backlight" , 0               , "backlight"} ,
   {"status keymap"    , 0               , "keymap"}    ,
@@ -15,14 +16,14 @@ const Brick bricks[] = {
 const static char delim[] = " ｜ ";
 
 /* Daemon's pid-file's full path. '%d' will be replaced by the user id */
-#define PIDFILEPATH_TEMPLATE "/tmp/dwmbricks-pid-%d"
+#define PIDFILEPATH_TEMPLATE "/tmp/staccato-pid-%d"
 
 /* Cli lockfile's full path. '%d' will be replaced by the user id */
-#define LOCKFILEPATH_TEMPLATE "/tmp/dwmbricks-lock-%d"
+#define LOCKFILEPATH_TEMPLATE "/tmp/staccato-lock-%d"
 
-/**
- * Misc compile-time settings
- */
+/* Maximum size of a command's output excl. null-delim in bytes. Longer
+ * outputs are truncated. */
+#define OUTBUFSIZE 64
 
 /* Max. size of daemon's pid-file's name in bytes */
 #define PIDFILEPATH_MAXLEN 64
@@ -30,5 +31,5 @@ const static char delim[] = " ｜ ";
 /* Max. size of cli's lockfile's name in bytes */
 #define LOCKFILEPATH_MAXLEN 64
 
-/* Size of shmem segment */
-#define shmsz 4096
+/* Size of shmem segment in bytes used to pass envvar strings to daemon */
+#define shmsz 1024

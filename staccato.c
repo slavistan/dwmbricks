@@ -22,7 +22,7 @@ static int lockfilefd;
 
 static void cleanup(int);
 pid_t daemonpid(void);
-static void sigbrick(unsigned, unsigned);
+static void siginstr(unsigned, unsigned);
 static void sigchar(unsigned, unsigned);
 
 /*
@@ -63,17 +63,17 @@ daemonpid(void) {
 }
 
 void
-sigbrick(unsigned brickndx, unsigned envcount)
+siginstr(unsigned instrndx, unsigned envcount)
 {
   union sigval sv = { .sival_int = 0 };
   unsigned *pdata = &sv.sival_int;
-  *pdata = (envcount << (sizeof(unsigned) * CHAR_BIT - 3)) | brickndx;
+  *pdata = (envcount << (sizeof(unsigned) * CHAR_BIT - 3)) | instrndx;
   sigqueue(daemonpid(), SIGUSR1, sv);
 }
 
 /*
  * TODO: adjust doc
- * Signal the daemon to execute brick to which the UTF-8 character at index
+ * Signal the daemon to execute instr to which the UTF-8 character at index
  * 'charndx' belongs. Character index and optional mouse button are encoded
  * into the signal's data. Elicits SIGURS2. Called exclusively by the cli.
  */
@@ -165,14 +165,14 @@ main(int argc, char** argv) {
     ndx = strtoul(argv[2], NULL, 10);
     sigchar(ndx, envcount);
   } else if (!strcmp(argv[1], "-t")) {
-    for (ii = 0; ii < LENGTH(bricks); ii++) {
-      if (!strcmp(argv[2], bricks[ii].tag)) {
-        sigbrick(ii, envcount);
+    for (ii = 0; ii < LENGTH(instructions); ii++) {
+      if (!strcmp(argv[2], instructions[ii].tag)) {
+        siginstr(ii, envcount);
       }
     }
   } else if (!strcmp(argv[1], "-b")) {
     ndx = strtoul(argv[2], NULL, 10);
-    sigbrick(ndx, envcount);
+    siginstr(ndx, envcount);
   } else {
     elog("Invalid arguments.");
   }

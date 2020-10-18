@@ -7,7 +7,7 @@ typedef struct {
   char* command;
   unsigned long interval;
   char* tag;
-} Brick;
+} Instruction;
 
 /* Macros */
 #define LENGTH(X) (sizeof(X) / sizeof (X[0]))
