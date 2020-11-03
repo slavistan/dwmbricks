@@ -292,3 +292,4 @@ main(int argc, char** argv) {
 //
 // TODO(feat): Copy instr's cmd output to cli's stdout
 // TODO(feat): Detect offline daemon when running cli
+// Include $DISPLAY into lock file's name (for single user & multiple displays, e.g. Xephyr)
