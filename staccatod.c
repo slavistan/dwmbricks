@@ -194,6 +194,7 @@ main(int argc, char** argv) {
   key_t key;
 
   /* Runtime init */
+  // TODO: Read pidfile from args
   sprintf(pidfilepath, PIDFILEPATH_TEMPLATE, getuid()); // TODO: error checking
   sigemptyset(&usrsigset); // TODO: error checking
   sigaddset(&usrsigset, SIGUSR1); // TODO: error checking
